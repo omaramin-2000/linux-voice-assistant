@@ -10,6 +10,7 @@ services:
     group_add:
       - audio
     environment:
+      - FIXED_MAC_ADDRESS=device_mac_address
       # - XDG_RUNTIME_DIR=/run/user/1000
       # - PULSE_SERVER=unix:/run/user/1000/pulse/native
       - AUDIO_OUTPUT_DEVICE=default
@@ -27,3 +28,5 @@ services:
       - "voice-satellite"
       - "--audio-input-device"
       - "default"
+      - "--wake-model"
+      - "hey_jarvis"
