@@ -5,25 +5,25 @@ services:
     image: ohf/linux-voice-assistant:local
     container_name: linux-voice-assistant
     restart: unless-stopped
-    # ipc: host
     devices:
       - "/dev/snd:/dev/snd"
     group_add:
       - audio
     environment:
-      - NAME=voice-satellite
-      # optional: if you want to override detection you can still provide:
-      - XDG_RUNTIME_DIR=/run/user/1000
+      # - XDG_RUNTIME_DIR=/run/user/1000
+      # - PULSE_SERVER=unix:/run/user/1000/pulse/native
       - AUDIO_OUTPUT_DEVICE=default
     volumes:
       - ./config:/app/.config
       - ./wakewords:/app/wakewords
       - ./sounds:/app/sounds
-      - /run/user/1000/pulse/native:/run/user/1000/pulse/native:ro
-      - /run/user/1000:/run/user/1000:ro 
-      # - /etc/asound.conf:/etc/asound.conf:ro  # ALSA configuration       
-      # no need to mount /etc/asound.conf manually — entrypoint writes it if necessary
+      # - /var/run/pulse/native:/var/run/pulse/native
+      # - /run/user/1000:/run/user/1000
     ports:
       - "6053:6053"
     tty: true
-
+    command:
+      - "--name"
+      - "voice-satellite"
+      - "--audio-input-device"
+      - "default"
