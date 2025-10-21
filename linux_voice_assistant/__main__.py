@@ -81,8 +81,9 @@ async def main() -> None:
         "--timer-finished-sound", default=str(_SOUNDS_DIR / "timer_finished.flac")
     )
     parser.add_argument(
-        "--processing-sound", default=str(_SOUNDS_DIR / "processing.wav"),
-        help="Short sound to play while assistant is processing (thinking)"
+        "--processing-sound",
+        default=str(_SOUNDS_DIR / "processing.wav"),
+        help="Short sound to play while assistant is processing (thinking)",
     )
     #
     parser.add_argument("--preferences-file", default=_REPO_DIR / "preferences.json")
@@ -140,7 +141,7 @@ async def main() -> None:
     initial_volume = preferences.volume if preferences.volume is not None else 1.0
     initial_volume = max(0.0, min(1.0, float(initial_volume)))
     preferences.volume = initial_volume
-    
+
     libtensorflowlite_c_path = _LIB_DIR / "libtensorflowlite_c.so"
     _LOGGER.debug("libtensorflowlite_c path: %s", libtensorflowlite_c_path)
 
@@ -180,6 +181,16 @@ async def main() -> None:
 
     assert stop_model is not None
 
+    # ---------------------------------------------------------------------
+    # Instantiate players using mpv subprocess support (prewarm & explicit binary)
+    # ---------------------------------------------------------------------
+    music_player = MpvMediaPlayer(
+        device=args.audio_output_device, mpv_binary="mpv", prewarm=True
+    )
+    tts_player = MpvMediaPlayer(
+        device=args.audio_output_device, mpv_binary="mpv", prewarm=True
+    )
+
     state = ServerState(
         name=args.name,
         mac_address=get_mac(),
@@ -188,8 +199,8 @@ async def main() -> None:
         available_wake_words=available_wake_words,
         wake_words=wake_models,
         stop_word=stop_model,
-        music_player=MpvMediaPlayer(device=args.audio_output_device),
-        tts_player=MpvMediaPlayer(device=args.audio_output_device),
+        music_player=music_player,
+        tts_player=tts_player,
         wakeup_sound=args.wakeup_sound,
         timer_finished_sound=args.timer_finished_sound,
         processing_sound=args.processing_sound,
@@ -205,7 +216,18 @@ async def main() -> None:
     initial_volume_percent = int(round(initial_volume * 100))
     state.music_player.set_volume(initial_volume_percent)
     state.tts_player.set_volume(initial_volume_percent)
-    
+
+    # Tune stream cache for network playback to reduce underruns on weak devices (Pi3)
+    try:
+        # Music streams typically benefit from a larger cache
+        state.music_player.set_stream_cache(15)
+        # TTS/announcements are short — small cache is OK
+        state.tts_player.set_stream_cache(6)
+    except Exception:
+        _LOGGER.debug(
+            "Failed to set stream cache (mpv binary may be missing or mpv_player lacks API)."
+        )
+
     process_audio_thread = threading.Thread(
         target=process_audio, args=(state,), daemon=True
     )
