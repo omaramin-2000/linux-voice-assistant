@@ -24,9 +24,15 @@ services:
       - "6053:6053"
     tty: true
     command:
+      - "--debug"
       - "--name"
       - "voice-satellite"
       - "--audio-input-device"
       - "default"
+      # For Raspberry PI: 
+      # - "--audio-input-device"
+      # - "USB PnP Audio Device: Audio (hw:2,0)"      
+      # - "--audio-output-device"
+      # - "pulse/bcm2835 Headphones: Audio (hw:1,0)"
       - "--wake-model"
       - "hey_jarvis"
