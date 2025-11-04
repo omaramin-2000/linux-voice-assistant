@@ -141,7 +141,7 @@ class VoiceSatelliteProtocol(APIServer):
         elif thinking_sound_switch not in self.state.entities:
             self.state.entities.append(thinking_sound_switch)
 
-        # Load thinking sound enabled state from preferences (default to True if not set)
+        # Load thinking sound enabled state from preferences (default to False if not set)
         if hasattr(self.state.preferences, 'thinking_sound_enabled'):
             self.state.thinking_sound_enabled = self.state.preferences.thinking_sound_enabled
         else:
