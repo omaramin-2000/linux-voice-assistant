@@ -37,7 +37,7 @@ from aioesphomeapi.model import (
 from google.protobuf import message
 
 from .api_server import APIServer
-from .entity import MediaPlayerEntity, MuteSwitchEntity
+from .entity import MediaPlayerEntity, MuteSwitchEntity, ThinkingSoundEntity
 from .microwakeword import MicroWakeWord
 from .models import ServerState
 from .openwakeword import OpenWakeWord
@@ -76,7 +76,16 @@ class VoiceSatelliteProtocol(APIServer):
             self.state.mute_switch_entity = existing_mute_switches[0]
             for extra in existing_mute_switches[1:]:
                 self.state.entities.remove(extra)
-                
+
+        existing_thinking_sound_switches = [
+            entity
+            for entity in self.state.entities
+            if isinstance(entity, ThinkingSoundEntity)
+        ]
+        if existing_thinking_sound_switches:
+            self.state.thinking_sound_entity = existing_thinking_sound_switches[0]
+            self.state.entities.remove(extra)
+
         if self.state.media_player_entity is None:
             self.state.media_player_entity = MediaPlayerEntity(
                 server=self,
@@ -116,6 +125,33 @@ class VoiceSatelliteProtocol(APIServer):
         mute_switch.update_set_muted(self._set_muted)
         mute_switch.sync_with_state()
         
+        # Add/update thinking sound entity
+        thinking_sound_switch = self.state.thinking_sound_entity
+        if thinking_sound_switch is None:
+            thinking_sound_switch = ThinkingSoundEntity(
+                server=self,
+                key=len(state.entities),
+                name="Thinking Sound",
+                object_id="thinking_sound",
+                get_thinking_sound_enabled=lambda: self.state.thinking_sound_enabled,
+                set_thinking_sound_enabled=self._set_thinking_sound_enabled,
+            )
+            self.state.entities.append(thinking_sound_switch)
+            self.state.thinking_sound_entity = thinking_sound_switch
+        elif thinking_sound_switch not in self.state.entities:
+            self.state.entities.append(thinking_sound_switch)
+
+        # Load thinking sound enabled state from preferences (default to True if not set)
+        if hasattr(self.state.preferences, 'thinking_sound_enabled'):
+            self.state.thinking_sound_enabled = self.state.preferences.thinking_sound_enabled
+        else:
+            self.state.thinking_sound_enabled = False
+
+        thinking_sound_switch.server = self
+        thinking_sound_switch.update_get_thinking_sound_enabled(lambda: self.state.thinking_sound_enabled)
+        thinking_sound_switch.update_set_thinking_sound_enabled(self._set_thinking_sound_enabled)
+        thinking_sound_switch.sync_with_state()
+
         self._is_streaming_audio = False
         self._tts_url: Optional[str] = None
         self._tts_played = False
@@ -141,6 +177,18 @@ class VoiceSatelliteProtocol(APIServer):
             _LOGGER.debug("Unmuting voice assistant (voice_assistant.start_continuous)")
             # Resume normal operation - wake word detection will be active again
             pass
+
+    def _set_thinking_sound_enabled(self, new_state: bool) -> None:
+        self.state.thinking_sound_enabled = bool(new_state)
+        self.state.preferences.thinking_sound_enabled = self.state.thinking_sound_enabled
+
+        if self.state.thinking_sound_enabled:
+            _LOGGER.debug("Thinking sound enabled")
+        else:
+            _LOGGER.debug("Thinking sound disabled")
+            pass
+        self.state.save_preferences()
+
     def handle_voice_event(
         self, event_type: VoiceAssistantEventType, data: Dict[str, str]
     ) -> None:
@@ -151,7 +199,7 @@ class VoiceSatelliteProtocol(APIServer):
             self._tts_played = False
             self._continue_conversation = False
             self._pipeline_active = True
-        elif event_type == VoiceAssistantEventType.VOICE_ASSISTANT_INTENT_START:
+        elif event_type == VoiceAssistantEventType.VOICE_ASSISTANT_INTENT_START and self.state.thinking_sound_enabled:
             # Play short "thinking/processing" sound if configured
             processing = getattr(self.state, "processing_sound", None)
             if processing:

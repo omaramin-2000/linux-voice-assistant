@@ -9,7 +9,7 @@ from queue import Queue
 from typing import TYPE_CHECKING, Dict, List, Optional, Union
 
 if TYPE_CHECKING:
-    from .entity import ESPHomeEntity, MediaPlayerEntity, MuteSwitchEntity
+    from .entity import ESPHomeEntity, MediaPlayerEntity, MuteSwitchEntity, ThinkingSoundEntity
     from .microwakeword import MicroWakeWord
     from .mpv_player import MpvMediaPlayer
     from .openwakeword import OpenWakeWord
@@ -83,9 +83,11 @@ class ServerState:
     media_player_entity: "Optional[MediaPlayerEntity]" = None
     satellite: "Optional[VoiceSatelliteProtocol]" = None
     mute_switch_entity: "Optional[MuteSwitchEntity]" = None
+    thinking_sound_entity: "Optional[ThinkingSoundEntity]" = None
     wake_words_changed: bool = False
     refractory_seconds: float = 2.0
     muted: bool = False
+    thinking_sound_enabled: bool = False
     connected: bool = False
     volume: float = 1.0
     

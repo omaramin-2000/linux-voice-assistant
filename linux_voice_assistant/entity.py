@@ -80,24 +80,40 @@ class MediaPlayerEntity(ESPHomeEntity):
         announcement: bool = False,
         done_callback: Optional[Callable[[], None]] = None,
     ) -> Iterable[message.Message]:
+        previous_state = self._determine_state()
         if announcement:
-            if self.music_player.is_playing:
-                # Announce, resume music
+            music_was_playing = self.music_player.is_playing
+            announce_was_paused = self.announce_player.is_paused
+
+            if music_was_playing:
                 self.music_player.pause()
+
+            def restore_announcement_pause() -> None:
+                if announce_was_paused:
+                    self.announce_player.pause()
+                    self.announce_player.is_paused = True
+
+            def restore_state() -> None:
+                self.server.send_messages(
+                    [self._update_state(previous_state)]
+                )
+
+            if music_was_playing:                
                 self.announce_player.play(
                     url,
                     done_callback=lambda: call_all(
-                        self.music_player.resume, done_callback
+                        self.music_player.resume,
+                        restore_announcement_pause,
+                        restore_state,
+                        done_callback,
                     ),
                 )
             else:
-                # Announce, idle
                 self.announce_player.play(
                     url,
                     done_callback=lambda: call_all(
-                        self.server.send_messages(
-                            [self._update_state(MediaPlayerState.IDLE)]
-                        ),
+                        restore_announcement_pause,
+                        restore_state,
                         done_callback,
                     ),
                 )
@@ -244,4 +260,56 @@ class MuteSwitchEntity(ESPHomeEntity):
         elif isinstance(msg, SubscribeHomeAssistantStatesRequest):
             # Always return our internal switch state
             self.sync_with_state()
-            yield SwitchStateResponse(key=self.key, state=self._switch_state)        
+            yield SwitchStateResponse(key=self.key, state=self._switch_state)
+
+class ThinkingSoundEntity(ESPHomeEntity):
+    def __init__(
+        self,
+        server: APIServer,
+        key: int,
+        name: str,
+        object_id: str,
+        get_thinking_sound_enabled: Callable[[], bool],
+        set_thinking_sound_enabled: Callable[[bool], None],
+    ) -> None:
+        ESPHomeEntity.__init__(self, server)
+
+        self.key = key
+        self.name = name
+        self.object_id = object_id
+        self._get_thinking_sound_enabled = get_thinking_sound_enabled
+        self._set_thinking_sound_enabled = set_thinking_sound_enabled
+        self._switch_state = self._get_thinking_sound_enabled()  # Sync internal state
+        
+    def update_get_thinking_sound_enabled(self, get_thinking_sound_enabled: Callable[[], bool]) -> None:
+        # Update the callback used to read the thinking sound enabled state.
+        self._get_thinking_sound_enabled = get_thinking_sound_enabled
+
+    def update_set_thinking_sound_enabled(self, set_thinking_sound_enabled: Callable[[bool], None]) -> None:
+        # Update the callback used to change the thinking sound enabled state.
+        self._set_thinking_sound_enabled = set_thinking_sound_enabled
+
+    def sync_with_state(self) -> None:
+        # Sync internal switch state with the actual thinking sound enabled state.
+        self._switch_state = self._get_thinking_sound_enabled()
+
+    def handle_message(self, msg: message.Message) -> Iterable[message.Message]:
+        if isinstance(msg, SwitchCommandRequest) and (msg.key == self.key):
+            # User toggled the switch - update our internal state and trigger actions
+            new_state = bool(msg.state)
+            self._switch_state = new_state
+            self._set_thinking_sound_enabled(new_state)
+            # Return the new state immediately
+            yield SwitchStateResponse(key=self.key, state=self._switch_state)
+        elif isinstance(msg, ListEntitiesRequest):
+            yield ListEntitiesSwitchResponse(
+                object_id=self.object_id,
+                key=self.key,
+                name=self.name,
+                entity_category=EntityCategory.CONFIG,
+                icon="mdi:music-note",
+            )
+        elif isinstance(msg, SubscribeHomeAssistantStatesRequest):
+            # Always return our internal switch state
+            self.sync_with_state()
+            yield SwitchStateResponse(key=self.key, state=self._switch_state)                                
