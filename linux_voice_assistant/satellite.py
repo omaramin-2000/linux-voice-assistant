@@ -84,7 +84,8 @@ class VoiceSatelliteProtocol(APIServer):
         ]
         if existing_thinking_sound_switches:
             self.state.thinking_sound_entity = existing_thinking_sound_switches[0]
-            self.state.entities.remove(extra)
+            for extra in existing_thinking_sound_switches[1:]:
+                self.state.entities.remove(extra)
 
         if self.state.media_player_entity is None:
             self.state.media_player_entity = MediaPlayerEntity(
