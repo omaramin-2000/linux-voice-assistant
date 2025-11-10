@@ -32,7 +32,7 @@ class AvailableWakeWord:
     trained_languages: List[str]
     wake_word_path: Path
 
-     def load(self) -> "Union[MicroWakeWord, OpenWakeWord]":
+    def load(self) -> "Union[MicroWakeWord, OpenWakeWord]":
         if self.type == WakeWordType.MICRO_WAKE_WORD:
             from pymicro_wakeword import MicroWakeWord
 
