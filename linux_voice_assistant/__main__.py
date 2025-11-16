@@ -64,6 +64,11 @@ async def main() -> None:
     )
     parser.add_argument("--stop-model", default="stop", help="Id of stop model")
     parser.add_argument(
+        "--download-dir",
+        default=_REPO_DIR / "local",
+        help="Directory to download custom wake word models, etc.",
+    )    
+    parser.add_argument(
         "--refractory-seconds",
         default=2.0,
         type=float,
@@ -120,6 +125,9 @@ async def main() -> None:
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
     _LOGGER.debug(args)
 
+    args.download_dir = Path(args.download_dir)
+    args.download_dir.mkdir(parents=True, exist_ok=True)
+
     # Resolve microphone
     if args.audio_input_device is not None:
         try:
@@ -133,6 +141,7 @@ async def main() -> None:
     
     # Load available wake words
     wake_word_dirs = [Path(ww_dir) for ww_dir in args.wake_word_dir]
+    wake_word_dirs.append(args.download_dir / "external_wake_words")
     available_wake_words: Dict[str, AvailableWakeWord] = {}
 
     for wake_word_dir in wake_word_dirs:
@@ -232,6 +241,7 @@ async def main() -> None:
         preferences_path=preferences_path,
         refractory_seconds=args.refractory_seconds,
         volume=initial_volume,
+        download_dir=args.download_dir,
     )
 
     if args.enable_thinking_sound:

@@ -72,6 +72,7 @@ class ServerState:
     timer_finished_sound: str
     preferences: Preferences
     preferences_path: Path
+    download_dir: Path
 
     media_player_entity: "Optional[MediaPlayerEntity]" = None
     satellite: "Optional[VoiceSatelliteProtocol]" = None
