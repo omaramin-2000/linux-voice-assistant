@@ -102,7 +102,10 @@ async def main() -> None:
     parser.add_argument(
         "--debug", action="store_true", help="Print DEBUG messages to console"
     )
-    args = parser.parse_args()
+    args, unknown_args = parser.parse_known_args()
+
+    if unknown_args:
+        _LOGGER.debug("Ignoring unrecognized arguments: %s", unknown_args)
 
     if args.list_input_devices:
         print("Input devices")
