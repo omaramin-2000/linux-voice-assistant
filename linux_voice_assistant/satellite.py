@@ -166,6 +166,8 @@ class VoiceSatelliteProtocol(APIServer):
         self._continue_conversation = False
         self._timer_finished = False
         self._processing = False
+        self._mute = False
+        self._unmute = False        
         self._pipeline_active = False
         self._external_wake_words: Dict[str, VoiceAssistantExternalWakeWord] = {}
 
@@ -181,9 +183,13 @@ class VoiceSatelliteProtocol(APIServer):
             self.state.tts_player.stop()
             # Stop any ongoing voice processing
             self.state.stop_word.is_active = False
+            self._mute = True
+            self.state.tts_player.play(self.state.mute_sound)            
         else:
             # voice_assistant.start_continuous behavior
             _LOGGER.debug("Unmuting voice assistant (voice_assistant.start_continuous)")
+            self._unmute = True
+            self.state.tts_player.play(self.state.unmute_sound)            
             # Resume normal operation - wake word detection will be active again
             pass
 
