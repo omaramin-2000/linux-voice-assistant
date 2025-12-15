@@ -24,7 +24,7 @@ class MpvMediaPlayer:
         self._done_callback: Optional[Callable[[], None]] = None
         self._done_callback_lock = Lock()
 
-        self._duck_ratio: float = 0.2
+        self._duck_ratio: float = 0.5
         self._unduck_volume: int = 100
         self._duck_volume: int = self._compute_duck_volume()
 
