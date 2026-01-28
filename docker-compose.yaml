@@ -38,3 +38,21 @@ services:
       - "hey_jarvis"
       # Enable thinking sound by default
       # - "--enable-thinking-sound"    
+
+
+      ## Customize default wakeup sound
+
+      # - "--wakeup-sound"               # Uncomment to override
+      ## Choose one of the following:
+      # - "/app/sounds/wake_word_triggered.flac"  #DEFAULT SOUND
+      ## Or
+      # - "/app/sounds/wake_word_triggered_old.wav"
+
+
+      ## Customize default timer sound 
+
+      # - "--timer-finished-sound"     # Uncomment to override
+      ## Choose one of the following:
+      # - "/app/sounds/timer_finished.flac"       #DEFAULT SOUND
+      ## Or
+      # - "/app/sounds/timer_finished_old.wav"
