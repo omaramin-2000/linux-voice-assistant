@@ -51,8 +51,9 @@ services:
 
       ## Customize default timer sound 
 
-      # - "--timer-finished-sound"     # Uncomment to override
+      # - "--timer-finished-sound"       # Uncomment to override
       ## Choose one of the following:
       # - "/app/sounds/timer_finished.flac"       #DEFAULT SOUND
       ## Or
       # - "/app/sounds/timer_finished_old.wav"
+
