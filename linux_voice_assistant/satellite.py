@@ -279,9 +279,7 @@ class VoiceSatelliteProtocol(APIServer):
             self._continue_conversation = msg.start_conversation
 
             self.duck()
-            yield from self.state.media_player_entity.play(
-                urls, announcement=True, done_callback=self._tts_finished
-            )
+            self.state.tts_player.play(urls, done_callback=self._tts_finished)
         elif isinstance(msg, VoiceAssistantTimerEventResponse):
             self.handle_timer_event(VoiceAssistantTimerEventType(msg.event_type), msg)
         elif isinstance(msg, DeviceInfoRequest):
@@ -597,3 +595,4 @@ class VoiceSatelliteProtocol(APIServer):
                 states.extend(entity.handle_message(SubscribeHomeAssistantStatesRequest()))
             self.send_messages(states)
             _LOGGER.debug("Sent entity states after connect")
+
