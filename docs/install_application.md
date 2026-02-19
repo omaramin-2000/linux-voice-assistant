@@ -188,12 +188,9 @@ Wants=network-online.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/linux-voice-assistant
-
 Environment=PATH=/home/pi/linux-voice-assistant/.venv/bin:/usr/bin:/bin
 # Environment=ENABLE_DEBUG="1"
 # Environment=LIST_DEVICES="1"
-Environment=LVA_USER_ID="1000"
-Environment=LVA_USER_GROUP="1000"
 # Environment=CLIENT_NAME="My Voice Assistant Speaker"
 Environment=LVA_PULSE_SERVER="unix:/run/user/${LVA_USER_ID}/pulse/native"
 Environment=LVA_XDG_RUNTIME_DIR="/run/user/${LVA_USER_ID}"
@@ -222,7 +219,7 @@ WantedBy=multi-user.target
 
 💡 **Note:** We are using the `docker-entrypoint.sh` script to start the application. This script is located in the root of the repository. But there is no docker used. Only the start script is used.
 
-💡 **Note:** Replace `LVA_USER_ID` with your actual user id that you want to run the voice assistant. Do the same for `LVA_USER_GROUP`.
+💡 **Note:** Replace `pi` with your actual user that you want to run the voice assistant. You need to run Pipewire and LVA with the same user in order to provide access to the audio socket. You can also add the group audio to the user which LVA is running on. `sudo usermod -a -G audio pi`
 
 Reload the systemd daemon and start the service:
 
@@ -265,7 +262,7 @@ The following variables can be configured in the `.env` or in the service file:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LVA_USER_ID` | `1000` | User ID for the container (usually 1000 for the first user) |
-| `GROUP_ID` | `1000` | GROUP ID for the container (usually 1000 for the first users group) |
+| `LVA_USER_GROUP` | `1000` | GROUP ID for the container (usually 1000 for the first users group) |
 | `CLIENT_NAME` | (optional) | Custom name for this voice assistant instance |
 | `LVA_PULSE_SERVER` | `unix:/run/user/${LVA_USER_ID}/pulse/native` | Path to the PulseAudio/PipeWire socket |
 | `LVA_XDG_RUNTIME_DIR` | `/run/user/${LVA_USER_ID}` | XDG runtime directory |
