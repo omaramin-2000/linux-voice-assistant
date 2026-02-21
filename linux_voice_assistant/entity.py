@@ -168,10 +168,12 @@ class MediaPlayerEntity(ESPHomeEntity):
 
             elif msg.has_volume:
                 self._log.debug("Message has volume: %.2f", msg.volume)
-                volume = int(msg.volume * 100)
-                self.music_player.set_volume(volume)
-                self.announce_player.set_volume(volume)
-                self.volume = msg.volume
+                self._apply_volume(msg.volume, persist=True)
+                if hasattr(self.server, "state") and getattr(self.server, "state", None) is not None:
+                    self._log.debug("Persisting volume to preferences")
+                    self.server.state.persist_volume(self.volume)
+                else:
+                    self._log.warning("Cannot persist volume - server.state not available")
                 yield self._update_state(self.state)
 
         elif isinstance(msg, ListEntitiesRequest):
