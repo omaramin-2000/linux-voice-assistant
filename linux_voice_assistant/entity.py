@@ -58,6 +58,8 @@ class MediaPlayerEntity(ESPHomeEntity):
         object_id: str,
         music_player: MpvMediaPlayer,
         announce_player: MpvMediaPlayer,
+        initial_volume: float = 1.0,
+        on_volume_changed: Optional[Callable[[float], None]] = None,
     ) -> None:
         ESPHomeEntity.__init__(self, server)
 
@@ -65,11 +67,13 @@ class MediaPlayerEntity(ESPHomeEntity):
         self.name = name
         self.object_id = object_id
         self.state = MediaPlayerState.IDLE
-        self.volume = 1.0
+        self.volume = max(0.0, min(1.0, initial_volume))
         self.muted = False
         self.previous_volume = 1.0
         self.music_player = music_player
         self.announce_player = announce_player
+        self._on_volume_changed = on_volume_changed
+        self.apply_volume_from_state(initial_volume)         
         self._log = logging.getLogger(f"{self.__class__.__name__}[{self.key}]")
 
     def play(
@@ -197,6 +201,42 @@ class MediaPlayerEntity(ESPHomeEntity):
             muted=self.muted,
         )
 
+    def apply_volume_from_state(self, volume: float) -> None:
+        """Synchronize the local volume with the stored state without persisting."""
+
+        clamped = max(0.0, min(1.0, float(volume)))
+
+        if self.muted:
+            self.previous_volume = clamped
+            return
+
+        self._apply_volume(clamped, persist=False)
+
+    def set_volume_callback(self, callback: Optional[Callable[[float], None]]) -> None:
+        """Update the callback invoked when the volume changes."""
+
+        self._on_volume_changed = callback
+
+    def _apply_volume(
+        self,
+        volume: float,
+        *,
+        persist: bool,
+        remember: bool = True,
+    ) -> None:
+        normalized = max(0.0, min(1.0, float(volume)))
+        volume_percent = int(round(normalized * 100))
+
+        self.music_player.set_volume(volume_percent)
+        self.announce_player.set_volume(volume_percent)
+
+        self.volume = normalized
+
+        if remember:
+            self.previous_volume = normalized
+
+        if self._on_volume_changed and persist:
+            self._on_volume_changed(normalized)
 
 # -----------------------------------------------------------------------------
 
