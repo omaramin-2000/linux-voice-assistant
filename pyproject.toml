@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name        = "linux-voice-assistant"
-version     = "1.0.0"
+version     = "0.1.0"
 license     = {text = "Apache-2.0"}
 description = "Linux voice assistant for Home Assistant using the ESPHome protocol"
 readme      = "README.md"
