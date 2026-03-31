@@ -42,7 +42,19 @@ But you can also install LVA on AMD64 devices, for example on your Linux desktop
 
 #### Installation
 
+**Option A) Assist Satellite app (recommended for Home Assistant OS users)**
+
+The easiest way to get started is the [Assist Satellite](https://github.com/home-assistant/addons/blob/master/assist_satellite) app, which packages Linux Voice Assistant as a Home Assistant add-on. Install it directly from the official add-on repository:
+
+[![Add repository to your Home Assistant instance.](https://my.home-assistant.io/badges/supervisor_addon.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https://github.com/home-assistant/addons)
+
+Once installed, the satellite is automatically discovered by Home Assistant via the ESPHome integration.
+
+**Option B) Raspberry Pi prebuilt image**
+
 For Raspberry Pi users, we provide a prebuild image that can be flashed to a SD card. See [PiCompose](https://github.com/florian-asche/PiCompose).
+
+**Option C) Docker / bare metal**
 
 For all other users we have different installation methods available (Docker, systemd), each with its own dedicated instructions. See [Linux-Voice-Assistant - Installation](docs/install.md). 
 
