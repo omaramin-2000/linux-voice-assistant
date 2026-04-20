@@ -56,11 +56,11 @@ For Raspberry Pi users, we provide a prebuild image that can be flashed to a SD 
 
 **Option C) Docker / bare metal**
 
-For all other users we have different installation methods available (Docker, systemd), each with its own dedicated instructions. See [Linux-Voice-Assistant - Installation](docs/install.md). 
+For all other users, we have different installation methods available (Docker, systemd), each with its own dedicated instructions. See [Linux-Voice-Assistant - Installation](docs/install.md). 
 
 #### Parameter overview
 
-💡 **Note:** There is a [environment variable](docs/install_application.md#environment-variables-reference) for each parameter if you use docker or systemd based setup.
+💡 **Note:** There is an [environment variable](docs/install_application.md#environment-variables-reference) for each parameter if you use docker or systemd based setup.
 
 ``` sh
 usage: __main__.py [-h] [--name NAME] [--audio-input-device AUDIO_INPUT_DEVICE] [--list-input-devices] [--audio-input-block-size AUDIO_INPUT_BLOCK_SIZE] [--audio-output-device AUDIO_OUTPUT_DEVICE] [--list-output-devices] [--wake-word-dir WAKE_WORD_DIR]  [--mic-auto-gain] [--mic-noise-suppression]
