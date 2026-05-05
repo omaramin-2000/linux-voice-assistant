@@ -158,11 +158,23 @@ class SharedState:
         self.volume: float = 1.0
         self.timer_total_seconds: int = 0
         self.timer_seconds_left: int = 0
+        # Monotonic instant the active timer expires at. Used by the
+        # timer-tick animation so brightness fades smoothly between the
+        # sparse timer_updated events LVA emits (typically only on
+        # pause/resume/edit, not every second).
+        self.timer_ends_at: float = 0.0
 
     def update(self, **kwargs) -> None:
         with self._lock:
             for key, val in kwargs.items():
                 setattr(self, key, val)
+
+    def set_timer_progress(self, total_seconds: int, seconds_left: int) -> None:
+        """Update timer counters and the monotonic deadline atomically."""
+        with self._lock:
+            self.timer_total_seconds = max(1, int(total_seconds))
+            self.timer_seconds_left = int(seconds_left)
+            self.timer_ends_at = time.monotonic() + max(0, int(seconds_left))
 
     @property
     def snapshot(self) -> dict:
@@ -174,6 +186,7 @@ class SharedState:
                 "volume":              self.volume,
                 "timer_total_seconds": self.timer_total_seconds,
                 "timer_seconds_left":  self.timer_seconds_left,
+                "timer_ends_at":       self.timer_ends_at,
             }
 
 
@@ -432,11 +445,16 @@ class LEDAnimator:
         """
         All 3 LEDs dim cyan, brightness proportional to time remaining.
         Full brightness = full time left; almost off = nearly expired.
+
+        Brightness is computed from a monotonic deadline rather than the
+        cached ``timer_seconds_left`` so it fades smoothly between
+        ``timer_updated`` events (which LVA only emits on lifecycle
+        changes — start/pause/resume/edit — not every second).
         """
         while True:
             snap = self._shared.snapshot
             total = max(snap["timer_total_seconds"], 1)
-            left  = snap["timer_seconds_left"]
+            left  = max(0.0, snap["timer_ends_at"] - time.monotonic())
             brightness = max(0.05, min(1.0, left / total))
             self._leds.set_all(CYAN)
             self._leds.show(brightness)
@@ -748,24 +766,24 @@ class LVAClient:
             self._animator.set_state(AssistState.NOT_READY)
 
         elif event == "timer_ticking":
-            self._state.update(
-                assist_state=AssistState.TIMER_TICKING,
-                timer_total_seconds=data.get("total_seconds", 0),
-                timer_seconds_left=data.get("seconds_left", 0),
+            self._state.set_timer_progress(
+                data.get("total_seconds", 0),
+                data.get("seconds_left", 0),
             )
+            self._state.update(assist_state=AssistState.TIMER_TICKING)
 
         elif event == "timer_updated":
-            self._state.update(
-                timer_total_seconds=data.get("total_seconds", 0),
-                timer_seconds_left=data.get("seconds_left", 0),
+            self._state.set_timer_progress(
+                data.get("total_seconds", 0),
+                data.get("seconds_left", 0),
             )
 
         elif event == "timer_ringing":
-            self._state.update(
-                assist_state=AssistState.TIMER_RINGING,
-                timer_total_seconds=data.get("total_seconds", 0),
-                timer_seconds_left=data.get("seconds_left", 0),
+            self._state.set_timer_progress(
+                data.get("total_seconds", 0),
+                data.get("seconds_left", 0),
             )
+            self._state.update(assist_state=AssistState.TIMER_RINGING)
 
         elif event == "media_player_playing":
             self._state.update(assist_state=AssistState.MEDIA_PLAYING)
