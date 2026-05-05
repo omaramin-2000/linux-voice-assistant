@@ -158,10 +158,8 @@ class SharedState:
         self.volume: float = 1.0
         self.timer_total_seconds: int = 0
         self.timer_seconds_left: int = 0
-        # Monotonic instant the active timer expires at. Used by the
-        # timer-tick animation so brightness fades smoothly between the
-        # sparse timer_updated events LVA emits (typically only on
-        # pause/resume/edit, not every second).
+        # Monotonic deadline used by _timer_tick to fade brightness
+        # smoothly between sparse timer_updated events.
         self.timer_ends_at: float = 0.0
 
     def update(self, **kwargs) -> None:
@@ -443,13 +441,9 @@ class LEDAnimator:
 
     async def _timer_tick(self) -> None:
         """
-        All 3 LEDs dim cyan, brightness proportional to time remaining.
-        Full brightness = full time left; almost off = nearly expired.
-
-        Brightness is computed from a monotonic deadline rather than the
-        cached ``timer_seconds_left`` so it fades smoothly between
-        ``timer_updated`` events (which LVA only emits on lifecycle
-        changes — start/pause/resume/edit — not every second).
+        All 3 LEDs dim cyan with brightness proportional to time remaining,
+        computed from a monotonic deadline so it fades smoothly between
+        sparse timer_updated events.
         """
         while True:
             snap = self._shared.snapshot
