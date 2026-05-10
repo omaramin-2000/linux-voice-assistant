@@ -446,6 +446,43 @@ class PeripheralAPIServer:
                 if satellite is not None:
                     satellite.send_messages([state.button_event_sensor_entity._get_state_message()])  # pylint: disable=protected-access
 
+        elif command == LVACommand.REGISTER_LIGHT:
+            self._register_light(msg.get("data") or {}, satellite)
+
+    def _register_light(self, data: Dict[str, Any], satellite: Any) -> None:
+        """Register a peripheral-declared Light. Idempotent on object_id."""
+        from .models import LightRegistration  # local import avoids circular dep
+
+        object_id = str(data.get("object_id", "")).strip()
+        if not object_id:
+            _LOGGER.warning("register_light without object_id; ignoring")
+            return
+
+        state = self._state
+        if state is None:
+            return
+
+        if any(spec.object_id == object_id for spec in state.pending_lights):
+            # Repeat registration (e.g. peripheral reconnect). The existing
+            # entity keeps its state; nothing to do.
+            return
+
+        spec = LightRegistration(
+            name=str(data.get("name", "LEDs")),
+            object_id=object_id,
+            effects=[str(e) for e in data.get("effects", []) if e],
+            supports_rgb=bool(data.get("supports_rgb", True)),
+            supports_brightness=bool(data.get("supports_brightness", True)),
+        )
+        state.pending_lights.append(spec)
+        _LOGGER.info("Light registered: %s (effects=%s)", object_id, spec.effects)
+
+        # If the satellite is already running, materialise the entity now
+        # so subsequent messages route correctly. HA still won't see it
+        # until next reconnect, but the rest of LVA stays consistent.
+        if satellite is not None:
+            satellite.register_pending_lights()
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------

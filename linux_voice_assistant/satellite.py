@@ -49,6 +49,7 @@ from pyopen_wakeword import OpenWakeWord
 from .api_server import APIServer
 from .entity import (
     ButtonEventSensorEntity,
+    LEDLightEntity,
     MediaPlayerEntity,
     MicSettingEntity,
     MuteSwitchEntity,
@@ -328,6 +329,10 @@ class VoiceSatelliteProtocol(APIServer):
 
         self.state.button_event_sensor_entity.server = self
 
+        # Materialise any Light entities peripherals registered before
+        # this satellite was constructed, plus reattach existing ones.
+        self.register_pending_lights()
+
         # ---- Instance variables ----
 
         self._is_streaming_audio = False
@@ -359,6 +364,48 @@ class VoiceSatelliteProtocol(APIServer):
         api = self.state.peripheral_api
         if api is not None:
             api.emit_event_sync(event, data)
+
+    def register_pending_lights(self) -> None:
+        """Materialise LightEntities for peripheral-registered lights.
+
+        Called from ``__init__`` so entities exist by the time HA enumerates,
+        and from the peripheral_api command dispatcher so newly registered
+        lights become available within the running satellite (HA still won't
+        see them until its next reconnect, but state stays consistent).
+        """
+        for spec in self.state.pending_lights:
+            if spec.object_id in self.state.led_light_entities:
+                # Already materialised. Re-attach server in case the
+                # satellite has been reconstructed (HA reconnect).
+                self.state.led_light_entities[spec.object_id].server = self
+                if self.state.led_light_entities[spec.object_id] not in self.state.entities:
+                    self.state.entities.append(self.state.led_light_entities[spec.object_id])
+                continue
+
+            object_id = spec.object_id
+            entity = LEDLightEntity(
+                server=self,
+                key=len(self.state.entities),
+                name=spec.name,
+                object_id=object_id,
+                effects=spec.effects,
+                supports_rgb=spec.supports_rgb,
+                supports_brightness=spec.supports_brightness,
+                on_changed=lambda oid=object_id: self._on_led_light_changed(oid),
+            )
+            self.state.entities.append(entity)
+            self.state.led_light_entities[object_id] = entity
+
+    def _on_led_light_changed(self, object_id: str) -> None:
+        """Forward HA Light entity changes to peripherals as light_command.
+
+        Routed by object_id so peripherals that registered multiple lights
+        can dispatch the right one to the right hardware.
+        """
+        entity = self.state.led_light_entities.get(object_id)
+        if entity is None:
+            return
+        self._emit(LVAEvent.LIGHT_COMMAND, entity.state_dict())
 
     # ------------------------------------------------------------------
     # Mute / thinking sound
