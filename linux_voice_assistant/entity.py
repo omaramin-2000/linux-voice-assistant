@@ -7,11 +7,14 @@ from typing import Callable, List, Optional, Union
 from aioesphomeapi.api_pb2 import (  # type: ignore[attr-defined]
     EventResponse,
     ListEntitiesEventResponse,
+    ListEntitiesLightResponse,
     ListEntitiesMediaPlayerResponse,
     ListEntitiesNumberResponse,
     ListEntitiesRequest,
     ListEntitiesSelectResponse,
     ListEntitiesSwitchResponse,
+    LightCommandRequest,
+    LightStateResponse,
     MediaPlayerCommandRequest,
     MediaPlayerStateResponse,
     NumberCommandRequest,
@@ -23,6 +26,7 @@ from aioesphomeapi.api_pb2 import (  # type: ignore[attr-defined]
     SwitchStateResponse,
 )
 from aioesphomeapi.model import (
+    ColorMode,
     EntityCategory,
     MediaPlayerCommand,
     MediaPlayerEntityFeature,
@@ -614,6 +618,118 @@ class StopWordSensitivityNumberEntity(ESPHomeEntity):
             yield NumberStateResponse(key=self.key, state=self.value)
 
 
+class LEDLightEntity(ESPHomeEntity):
+    """RGB Light entity for peripheral LEDs.
+
+    Capabilities (effects, RGB support, brightness support) are declared
+    by the peripheral via ``register_light``. State changes from HA fire
+    ``on_changed`` so the peripheral API server can broadcast a
+    ``light_command`` event back to the originating peripheral, which
+    applies the new state to its hardware.
+    """
+
+    def __init__(
+        self,
+        server: APIServer,
+        key: int,
+        name: str,
+        object_id: str,
+        effects: Optional[List[str]] = None,
+        supports_rgb: bool = True,
+        supports_brightness: bool = True,
+        on_changed: Optional[Callable[[], None]] = None,
+    ) -> None:
+        ESPHomeEntity.__init__(self, server)
+        self.key = key
+        self.name = name
+        self.object_id = object_id
+        self._on_changed = on_changed
+        self.effects_list: List[str] = list(effects) if effects else []
+        self._supports_rgb = supports_rgb
+        self._supports_brightness = supports_brightness
+
+        self.is_on: bool = True
+        self.brightness: float = 1.0
+        # Default to HA Voice PE "voice assistant blue" when RGB is supported.
+        self.red: float = 0.0
+        self.green: float = 0.2
+        self.blue: float = 1.0
+        # Default effect: first declared, or empty if none.
+        self.effect: str = self.effects_list[0] if self.effects_list else ""
+
+    def update_on_changed(self, on_changed: Optional[Callable[[], None]]) -> None:
+        self._on_changed = on_changed
+
+    def _color_mode(self) -> ColorMode:
+        if self._supports_rgb:
+            return ColorMode.RGB
+        if self._supports_brightness:
+            return ColorMode.BRIGHTNESS
+        return ColorMode.ON_OFF
+
+    def state_dict(self) -> dict:
+        """JSON-serialisable state for the light_command event payload.
+        Includes object_id so peripherals can route events to the right
+        hardware when more than one Light is registered."""
+        return {
+            "object_id": self.object_id,
+            "state": self.is_on,
+            "brightness": self.brightness,
+            "red": self.red,
+            "green": self.green,
+            "blue": self.blue,
+            "effect": self.effect,
+        }
+
+    def handle_message(self, msg: message.Message) -> Iterable[message.Message]:
+        if isinstance(msg, LightCommandRequest) and msg.key == self.key:
+            changed = False
+            if msg.has_state:
+                self.is_on = bool(msg.state)
+                changed = True
+            if msg.has_brightness and self._supports_brightness:
+                self.brightness = max(0.0, min(1.0, float(msg.brightness)))
+                changed = True
+            if msg.has_rgb and self._supports_rgb:
+                self.red = max(0.0, min(1.0, float(msg.red)))
+                self.green = max(0.0, min(1.0, float(msg.green)))
+                self.blue = max(0.0, min(1.0, float(msg.blue)))
+                changed = True
+            if msg.has_effect:
+                requested = str(msg.effect)
+                if requested in self.effects_list:
+                    self.effect = requested
+                    changed = True
+            if changed and self._on_changed is not None:
+                self._on_changed()
+            yield self._state_response()
+        elif isinstance(msg, ListEntitiesRequest):
+            yield ListEntitiesLightResponse(
+                object_id=self.object_id,
+                key=self.key,
+                name=self.name,
+                supported_color_modes=[int(self._color_mode())],
+                effects=self.effects_list,
+                icon="mdi:led-strip-variant",
+                entity_category=EntityCategory.CONFIG,
+            )
+        elif isinstance(msg, SubscribeHomeAssistantStatesRequest):
+            yield self._state_response()
+
+    def _state_response(self) -> LightStateResponse:
+        return LightStateResponse(
+            key=self.key,
+            state=self.is_on,
+            brightness=self.brightness,
+            color_mode=int(self._color_mode()),
+            color_brightness=self.brightness,
+            red=self.red,
+            green=self.green,
+            blue=self.blue,
+            effect=self.effect,
+        )
+
+
 class ButtonEventSensorEntity(ESPHomeEntity):
     def __init__(
         self,
@@ -661,6 +777,7 @@ __all__ = [
     "MediaPlayerEntity",
     "MuteSwitchEntity",
     "ThinkingSoundEntity",
+    "LEDLightEntity",
     "ButtonEventSensorEntity",
     "WakeWord1SensitivityNumberEntity",
     "WakeWord2SensitivityNumberEntity",
