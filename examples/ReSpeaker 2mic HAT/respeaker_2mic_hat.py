@@ -12,8 +12,8 @@ Hardware layout
 LED behaviours
 --------------
   idle             : all off
-  wake_word        : brief blue flash on all 3 LEDs
-  listening        : cyan chase (one LED sweeps left → right → left)
+  wake_word        : brief flash on all 3 LEDs (user color from HA Light entity)
+  listening        : chase across the LEDs (user color from HA Light entity)
   thinking         : yellow pulse on all 3 LEDs
   tts_speaking     : green breathe on all 3 LEDs
   muted            : LED 0 and LED 2 solid red (mic positions), centre off
@@ -22,6 +22,11 @@ LED behaviours
   timer_ticking    : all 3 dim cyan, brightness proportional to time left
   media_playing    : dim green steady on all 3 LEDs
   not_ready/no_ha  : dim red pulse on all 3 LEDs
+
+The script registers an HA Light entity with LVA on connect (via the
+register_light command). HA-side changes flow back as light_command
+events: on/off, brightness scale all animations; effect "None" holds a
+solid user color and skips pipeline animations.
 
 Button behaviour (context action — same priority as HA Voice PE centre button)
 -------------------------------------------------------------------------------
@@ -68,7 +73,7 @@ import sys
 import threading
 import time
 from enum import Enum
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple, Union
 
 # ---------------------------------------------------------------------------
 # Hardware dependencies — gracefully stubbed when not on real Pi hardware
@@ -118,6 +123,11 @@ LONG_PRESS_MS         = 1000   # Duration to detect long press
 
 RECONNECT_DELAY_S = 3.0
 
+# HA Light entity registered with LVA via register_light. The same object_id
+# is used to route incoming light_command events back to this script.
+LIGHT_OBJECT_ID = "leds"
+LIGHT_NAME      = "LEDs"
+
 
 # ===========================================================================
 # Logging
@@ -143,6 +153,15 @@ class AssistState(str, Enum):
     TIMER_TICKING = "timer_ticking"
     TIMER_RINGING = "timer_ringing"
     MEDIA_PLAYING = "media_player_playing"
+    # Pseudo-states driven by the HA Light entity (not emitted by LVA).
+    OFF           = "off"     # Light entity is off — all LEDs dark.
+    STATIC        = "static"  # Effect "None" — hold solid user color.
+
+
+# Effect names — must match the LEDLightEntity effects list registered
+# with LVA via register_light below.
+EFFECT_VOICE_ASSISTANT = "Voice Assistant"
+EFFECT_NONE            = "None"
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +177,15 @@ class SharedState:
         self.volume: float = 1.0
         self.timer_total_seconds: int = 0
         self.timer_seconds_left: int = 0
+        # HA-driven Light entity state. Defaults match the LEDLightEntity
+        # in LVA core, so the script does the right thing before any
+        # light_command arrives.
+        self.light_is_on: bool = True
+        self.light_brightness: float = 1.0
+        self.light_red: float = 0.0
+        self.light_green: float = 0.2
+        self.light_blue: float = 1.0
+        self.light_effect: str = EFFECT_VOICE_ASSISTANT
 
     def update(self, **kwargs) -> None:
         with self._lock:
@@ -174,6 +202,12 @@ class SharedState:
                 "volume":              self.volume,
                 "timer_total_seconds": self.timer_total_seconds,
                 "timer_seconds_left":  self.timer_seconds_left,
+                "light_is_on":         self.light_is_on,
+                "light_brightness":    self.light_brightness,
+                "light_red":           self.light_red,
+                "light_green":         self.light_green,
+                "light_blue":          self.light_blue,
+                "light_effect":        self.light_effect,
             }
 
 
@@ -182,6 +216,7 @@ class SharedState:
 # ===========================================================================
 
 RGB = Tuple[int, int, int]
+ColorSource = Union[RGB, Callable[[], RGB]]
 
 OFF    : RGB = (0,   0,   0)
 RED    : RGB = (255, 0,   0)
@@ -195,6 +230,14 @@ DIM_RED: RGB = (80,  0,   0)
 def _scale(color: RGB, factor: float) -> RGB:
     f = max(0.0, min(1.0, factor))
     return (int(color[0] * f), int(color[1] * f), int(color[2] * f))
+
+
+def _resolve(color: ColorSource) -> RGB:
+    """Accept either a fixed RGB tuple or a zero-arg callable returning one.
+    Animations that should track HA's user color pass the callable so the
+    color refreshes on every frame; animations using semantic colors pass
+    the tuple directly."""
+    return color() if callable(color) else color
 
 
 class APA102:
@@ -282,29 +325,45 @@ class LEDAnimator:
         self._task: Optional[asyncio.Task] = None
         self._current_state: AssistState = AssistState.NOT_READY
 
-    def set_state(self, state: AssistState) -> None:
-        if self._current_state == state:
+    def set_state(self, state: AssistState, force: bool = False) -> None:
+        # HA Light entity overrides take precedence over pipeline state.
+        # ``force=True`` bypasses the no-op guard so a light_command can
+        # re-render with the new color/brightness/effect even when the
+        # underlying assist state hasn't changed.
+        snap = self._shared.snapshot
+        if not snap["light_is_on"]:
+            state = AssistState.OFF
+        elif snap["light_effect"] == EFFECT_NONE:
+            state = AssistState.STATIC
+
+        if not force and self._current_state == state:
             return
         self._current_state = state
         self._cancel()
 
         _LOGGER.debug("LED state → %s", state.value)
 
-        snap = self._shared.snapshot
+        if state == AssistState.OFF:
+            self._leds.off()  # No animation task — LEDs stay dark.
 
-        if state == AssistState.IDLE:
+        elif state == AssistState.STATIC:
+            self._task = asyncio.create_task(self._static())
+
+        elif state == AssistState.IDLE:
             self._task = asyncio.create_task(self._idle())
 
         elif state == AssistState.NOT_READY:
             self._task = asyncio.create_task(self._pulse_all(DIM_RED))
 
         elif state == AssistState.WAKE_WORD:
+            # User color (HAVPE tinting) — flash on all 3 LEDs.
             self._task = asyncio.create_task(
-                self._flash_all(BLUE, flashes=2, on_ms=120, off_ms=80)
+                self._flash_all(self._user_color, flashes=2, on_ms=120, off_ms=80)
             )
 
         elif state == AssistState.LISTENING:
-            self._task = asyncio.create_task(self._chase(CYAN))
+            # User color (HAVPE tinting) — chase across the LEDs.
+            self._task = asyncio.create_task(self._chase(self._user_color))
 
         elif state == AssistState.THINKING:
             self._task = asyncio.create_task(self._pulse_all(YELLOW))
@@ -341,6 +400,21 @@ class LEDAnimator:
         else:
             self._task = asyncio.create_task(self._idle())
 
+    # Helpers that read HA-driven Light entity state from shared state.
+
+    def _user_color(self) -> RGB:
+        snap = self._shared.snapshot
+        return (
+            int(max(0.0, min(1.0, snap["light_red"])) * 255),
+            int(max(0.0, min(1.0, snap["light_green"])) * 255),
+            int(max(0.0, min(1.0, snap["light_blue"])) * 255),
+        )
+
+    def _brightness(self, base: float = 1.0) -> float:
+        """Scale an animation's calculated brightness by user brightness."""
+        snap = self._shared.snapshot
+        return max(0.0, min(1.0, base * float(snap["light_brightness"])))
+
     def _cancel(self) -> None:
         if self._task and not self._task.done():
             self._task.cancel()
@@ -356,20 +430,26 @@ class LEDAnimator:
     async def _idle(self) -> None:
         self._leds.off()
 
-    async def _steady_all(self, color: RGB, brightness: float = LED_BRIGHTNESS) -> None:
-        self._leds.set_all(color)
-        self._leds.show(brightness)
+    async def _static(self) -> None:
+        """Hold the user-set solid color while effect is "None".
+        One-shot render — set_state(force=True) re-renders on changes."""
+        self._leds.set_all(self._user_color())
+        self._leds.show(self._brightness())
+
+    async def _steady_all(self, color: ColorSource, brightness: float = LED_BRIGHTNESS) -> None:
+        self._leds.set_all(_resolve(color))
+        self._leds.show(self._brightness(brightness))
 
     async def _muted(self) -> None:
         """Left (MIC_L) and right (MIC_R) LEDs red; centre off."""
         self._leds.set(0, RED)
         self._leds.set(1, OFF)
         self._leds.set(2, RED)
-        self._leds.show(0.6)
+        self._leds.show(self._brightness(0.6))
 
     async def _flash_all(
         self,
-        color: RGB,
+        color: ColorSource,
         flashes: int = 2,
         on_ms: int = 150,
         off_ms: int = 100,
@@ -384,8 +464,8 @@ class LEDAnimator:
         """
         count = 0
         while True:
-            self._leds.set_all(color)
-            self._leds.show(1.0)
+            self._leds.set_all(_resolve(color))
+            self._leds.show(self._brightness())
             await asyncio.sleep(on_ms / 1000)
             self._leds.off()
             await asyncio.sleep(off_ms / 1000)
@@ -395,7 +475,7 @@ class LEDAnimator:
         if then_off:
             self._leds.off()
 
-    async def _chase(self, color: RGB, step_s: float = 0.12) -> None:
+    async def _chase(self, color: ColorSource, step_s: float = 0.12) -> None:
         """
         One lit LED bounces left → right → left.
         Gives the impression of listening / scanning.
@@ -405,27 +485,27 @@ class LEDAnimator:
         while True:
             for i in range(LED_COUNT):
                 self._leds.set(i, OFF)
-            self._leds.set(sequence[pos % len(sequence)], color)
-            self._leds.show(1.0)
+            self._leds.set(sequence[pos % len(sequence)], _resolve(color))
+            self._leds.show(self._brightness())
             pos += 1
             await asyncio.sleep(step_s)
 
-    async def _pulse_all(self, color: RGB, period: float = 1.0) -> None:
+    async def _pulse_all(self, color: ColorSource, period: float = 1.0) -> None:
         """All 3 LEDs pulse together in brightness."""
         while True:
             t = time.monotonic()
             brightness = 0.2 + 0.8 * (0.5 + 0.5 * math.sin(2 * math.pi * t / period))
-            self._leds.set_all(color)
-            self._leds.show(brightness)
+            self._leds.set_all(_resolve(color))
+            self._leds.show(self._brightness(brightness))
             await asyncio.sleep(0.03)
 
-    async def _breathe_all(self, color: RGB, period: float = 2.0) -> None:
+    async def _breathe_all(self, color: ColorSource, period: float = 2.0) -> None:
         """Slow sine-wave breathe on all 3 LEDs."""
         while True:
             t = time.monotonic()
             brightness = 0.1 + 0.9 * (0.5 + 0.5 * math.sin(2 * math.pi * t / period))
-            self._leds.set_all(color)
-            self._leds.show(brightness)
+            self._leds.set_all(_resolve(color))
+            self._leds.show(self._brightness(brightness))
             await asyncio.sleep(0.03)
 
     async def _timer_tick(self) -> None:
@@ -439,7 +519,7 @@ class LEDAnimator:
             left  = snap["timer_seconds_left"]
             brightness = max(0.05, min(1.0, left / total))
             self._leds.set_all(CYAN)
-            self._leds.show(brightness)
+            self._leds.show(self._brightness(brightness))
             await asyncio.sleep(0.5)
 
 
@@ -655,6 +735,19 @@ class LVAClient:
             self._uri, ping_interval=20, ping_timeout=10
         ) as ws:
             _LOGGER.info("Connected to LVA peripheral API")
+            # Register the LED Light entity with LVA so HA can control it.
+            # Repeat registrations across reconnects are no-ops on the LVA
+            # side, so it's safe to send this on every connect.
+            await ws.send(json.dumps({
+                "command": "register_light",
+                "data": {
+                    "name": LIGHT_NAME,
+                    "object_id": LIGHT_OBJECT_ID,
+                    "effects": [EFFECT_VOICE_ASSISTANT, EFFECT_NONE],
+                    "supports_rgb": True,
+                    "supports_brightness": True,
+                },
+            }))
             recv_task = asyncio.create_task(self._recv_loop(ws))
             send_task = asyncio.create_task(self._send_loop(ws))
             done, pending = await asyncio.wait(
@@ -785,6 +878,22 @@ class LVAClient:
                 _LOGGER.info("Home Assistant connected")
             elif status == "getting_started":
                 _LOGGER.info("LVA starting up, waiting for HA …")
+
+        elif event == "light_command":
+            # LVA broadcasts to every connected peripheral; only act on
+            # commands targeting our registered Light.
+            if data.get("object_id") != LIGHT_OBJECT_ID:
+                return
+            self._state.update(
+                light_is_on=bool(data.get("state", True)),
+                light_brightness=float(data.get("brightness", 1.0)),
+                light_red=float(data.get("red", 0.0)),
+                light_green=float(data.get("green", 0.2)),
+                light_blue=float(data.get("blue", 1.0)),
+                light_effect=str(data.get("effect", EFFECT_VOICE_ASSISTANT)),
+            )
+            self._animator.set_state(self._state.assist_state, force=True)
+            return
 
         # Sync animator with current state
         self._animator.set_state(self._state.assist_state)
