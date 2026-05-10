@@ -46,6 +46,13 @@ Feedback events emitted by LVA
   volume_changed        data: {"volume": 0.0–1.0}
   volume_muted          data: {"muted": true/false}
   zeroconf              data: {"status": "getting_started" | "connected"}
+  light_command         data: {"object_id": str, "state": bool, "brightness": float,
+                              "red": float, "green": float, "blue": float, "effect": str}
+              Fired when HA changes a Light entity that a peripheral
+              previously registered via register_light. The peripheral
+              matches on object_id and applies the new state. Effect
+              "Voice Assistant" runs pipeline animations; "None" holds
+              a solid user color.
 
 Commands accepted from the peripheral container
 ------------------------------------------------
@@ -67,6 +74,14 @@ Commands accepted from the peripheral container
   button_double_press
   button_triple_press
   button_long_press
+  register_light    data: {"name": str, "object_id": str, "effects": [str],
+                           "supports_rgb": bool, "supports_brightness": bool}
+              Peripheral declares an LED Light it wants exposed in HA.
+              LVA creates a matching ESPHome Light entity (visible as
+              ``light.<satellite>_<object_id>``) and routes HA-side
+              changes back to the peripheral as light_command events.
+              Send once after connecting; duplicate registrations for
+              the same object_id are ignored.
 """
 
 from __future__ import annotations
@@ -112,6 +127,7 @@ class LVAEvent(str, Enum):
     VOLUME_CHANGED = "volume_changed"
     VOLUME_MUTED = "volume_muted"
     ZEROCONF = "zeroconf"
+    LIGHT_COMMAND = "light_command"
 
 
 class LVACommand(str, Enum):
@@ -132,6 +148,7 @@ class LVACommand(str, Enum):
     BUTTON_DOUBLE_PRESS = "button_double_press"
     BUTTON_TRIPLE_PRESS = "button_triple_press"
     BUTTON_LONG_PRESS = "button_long_press"
+    REGISTER_LIGHT = "register_light"
 
 
 # ---------------------------------------------------------------------------
