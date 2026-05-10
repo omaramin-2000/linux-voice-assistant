@@ -25,7 +25,8 @@ LED behaviours
 
 The script registers an HA Light entity with LVA on connect (via the
 register_light command). HA-side changes flow back as light_command
-events: on/off, brightness scale all animations; effect "None" holds a
+events: on/off, brightness scale all animations; effect "Rainbow"
+cycles the LEDs through the HSV color wheel; effect "None" holds a
 solid user color and skips pipeline animations.
 
 Button behaviour (context action — same priority as HA Voice PE centre button)
@@ -65,6 +66,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import colorsys
 import json
 import logging
 import math
@@ -156,11 +158,13 @@ class AssistState(str, Enum):
     # Pseudo-states driven by the HA Light entity (not emitted by LVA).
     OFF           = "off"     # Light entity is off — all LEDs dark.
     STATIC        = "static"  # Effect "None" — hold solid user color.
+    RAINBOW       = "rainbow" # Effect "Rainbow" — cycle through hues.
 
 
 # Effect names — must match the LEDLightEntity effects list registered
 # with LVA via register_light below.
 EFFECT_VOICE_ASSISTANT = "Voice Assistant"
+EFFECT_RAINBOW         = "Rainbow"
 EFFECT_NONE            = "None"
 
 
@@ -335,6 +339,8 @@ class LEDAnimator:
             state = AssistState.OFF
         elif snap["light_effect"] == EFFECT_NONE:
             state = AssistState.STATIC
+        elif snap["light_effect"] == EFFECT_RAINBOW:
+            state = AssistState.RAINBOW
 
         if not force and self._current_state == state:
             return
@@ -348,6 +354,9 @@ class LEDAnimator:
 
         elif state == AssistState.STATIC:
             self._task = asyncio.create_task(self._static())
+
+        elif state == AssistState.RAINBOW:
+            self._task = asyncio.create_task(self._rainbow())
 
         elif state == AssistState.IDLE:
             self._task = asyncio.create_task(self._idle())
@@ -435,6 +444,23 @@ class LEDAnimator:
         One-shot render — set_state(force=True) re-renders on changes."""
         self._leds.set_all(self._user_color())
         self._leds.show(self._brightness())
+
+    async def _rainbow(self, period: float = 5.0) -> None:
+        """Cycle the LEDs through the HSV color wheel.
+
+        Each LED is offset by a third of the wheel so the strip always
+        shows a slice of rainbow rather than one solid color shifting.
+        ``period`` seconds for one full revolution.
+        """
+        spread = 1.0 / max(LED_COUNT, 1)
+        while True:
+            base_hue = (time.monotonic() / period) % 1.0
+            for i in range(LED_COUNT):
+                hue = (base_hue + i * spread) % 1.0
+                r, g, b = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
+                self._leds.set(i, (int(r * 255), int(g * 255), int(b * 255)))
+            self._leds.show(self._brightness())
+            await asyncio.sleep(0.05)
 
     async def _steady_all(self, color: ColorSource, brightness: float = LED_BRIGHTNESS) -> None:
         self._leds.set_all(_resolve(color))
@@ -743,7 +769,7 @@ class LVAClient:
                 "data": {
                     "name": LIGHT_NAME,
                     "object_id": LIGHT_OBJECT_ID,
-                    "effects": [EFFECT_VOICE_ASSISTANT, EFFECT_NONE],
+                    "effects": [EFFECT_VOICE_ASSISTANT, EFFECT_RAINBOW, EFFECT_NONE],
                     "supports_rgb": True,
                     "supports_brightness": True,
                 },
