@@ -196,6 +196,17 @@ async def main() -> None:
         action="store_true",
         help="Disable the peripheral WebSocket API entirely",
     )
+    parser.add_argument(
+        "--peripheral-startup-wait",
+        type=float,
+        default=2.0,
+        metavar="SECONDS",
+        help=(
+            "Seconds to wait for peripherals to connect and register their "
+            "entities before HA enumerates the ESPHome API "
+            "(default: %(default)s; set 0 to skip)."
+        ),
+    )
     # ------------------------------------------------------------------
     parser.add_argument(
         "--timer-max-ring-seconds",
@@ -490,6 +501,19 @@ async def main() -> None:
     if peripheral_api is not None:
         await peripheral_api.start()
         await peripheral_api.emit_event(LVAEvent.ZEROCONF, {"status": "getting_started"})
+
+        # Give peripherals a window to connect and register their Light
+        # entities before HA enumerates over the ESPHome native API. The
+        # ESPHome server is bound but not yet serving (serve_forever runs
+        # below), so HA's connection sits queued in the kernel during
+        # this wait. Late-registering peripherals require an HA reload
+        # to appear; this wait keeps zero-friction first-boot setups.
+        if args.peripheral_startup_wait > 0:
+            _LOGGER.info(
+                "Waiting %.1fs for peripherals to register entities…",
+                args.peripheral_startup_wait,
+            )
+            await asyncio.sleep(args.peripheral_startup_wait)
 
     try:
         async with server:  # type: ignore[union-attr]
