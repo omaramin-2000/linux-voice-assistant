@@ -37,7 +37,7 @@ Button behaviour (context action — same priority as HA Voice PE centre button)
       thinking (pipeline active) /
         tts speaking                → stop_pipeline
     media playing               → stop_media_player
-    idle / anything else        → start_listening
+    idle / anything else        → toggle mute (mute_mic / unmute_mic)
 
   Multi-press (detected via timing):
     double press (< 500ms between releases)  → button_double_press
@@ -599,7 +599,7 @@ class ButtonHandler:
           2. Pipeline active            → stop_pipeline
              (wake word / listening / thinking / speaking)
           3. Media playing              → stop_media_player
-          4. Idle / anything else       → start_listening
+          4. Idle / anything else       → toggle mute
         """
         assist = self._state.assist_state
 
@@ -609,8 +609,10 @@ class ButtonHandler:
             self._send("stop_pipeline")
         elif assist == AssistState.MEDIA_PLAYING:
             self._send("stop_media_player")
+        elif self._state.muted:
+            self._send("unmute_mic")
         else:
-            self._send("start_listening")
+            self._send("mute_mic")
 
 
 # ===========================================================================
