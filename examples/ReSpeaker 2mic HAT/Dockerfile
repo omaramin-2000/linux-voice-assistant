@@ -12,16 +12,32 @@ LABEL \
 # ----------------------------------------------------------------------------
 # System packages
 #
-#   build-essential  – compiles spidev C extension
-#   python3-dev      – Python C headers
+# The lgpio Python package wraps the system ``liblgpio`` C library, which
+# isn't in Debian's repos (Raspberry Pi OS ships it; upstream Debian
+# doesn't). On aarch64 with no prebuilt wheel we have to compile the C
+# library from source and then build the Python bindings against it.
+#
+#   build-essential  – compiles the lgpio C library, spidev, and the
+#                      Python lgpio extension
+#   python3-dev      – Python C headers for the Python lgpio extension
+#   swig             – generates the Python lgpio bindings at build time
+#   git              – clones the lgpio C library source
 # ----------------------------------------------------------------------------
 RUN apt-get update && \
     apt-get install --yes --no-install-recommends \
         build-essential \
         python3-dev \
+        swig \
+        git \
         ca-certificates && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+# Build and install the lgpio C library so the lgpio Python package can
+# link against it. Pinned to a tagged release (v0.2.2) for reproducibility.
+RUN git clone --depth 1 --branch v0.2.2 https://github.com/joan2937/lg.git /tmp/lg && \
+    cd /tmp/lg && make && make install && ldconfig && \
+    rm -rf /tmp/lg
 
 WORKDIR /app
 
