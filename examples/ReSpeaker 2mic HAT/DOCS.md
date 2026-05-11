@@ -89,12 +89,12 @@ On connect the controller registers a Light entity with LVA, which appears in Ho
 | Effect | Behaviour |
 |---|---|
 | `Voice Assistant` (default) | Run the pipeline animations from the table above. Wake word and Listening are tinted with the HA color; brightness scales every animation. |
-| `Rainbow` | All three LEDs cycle through the HSV color wheel, each offset by a third so the strip is always showing a slice of rainbow rather than one shifting color. Five-second period. |
+| `Loop` | All three LEDs share the same hue and cycle through the HSV color wheel in unison. Five-second period. |
 | `None` | Pipeline animations are suppressed. The LEDs hold the user-set solid color at the user-set brightness. Useful as a static accent or notification surface for HA automations. |
 
 ### Brightness, on/off, and color
 
-Turning the Light off in HA puts the LEDs dark immediately and stops every animation; turning it back on resumes whatever matches the current LVA state. Brightness scales linearly across all effects and animations. RGB color drives the Wake word / Listening tint when effect is `Voice Assistant`, and is the solid color when effect is `None`. The Rainbow effect ignores the user color (it spans the whole wheel by design) but still respects on/off and brightness.
+Turning the Light off in HA puts the LEDs dark immediately and stops every animation; turning it back on resumes whatever matches the current LVA state. Brightness scales linearly across all effects and animations. RGB color drives the Wake word / Listening tint when effect is `Voice Assistant`, and is the solid color when effect is `None`. The Loop effect ignores the user color (it spans the whole wheel by design) but still respects on/off and brightness.
 
 ---
 
