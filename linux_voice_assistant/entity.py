@@ -6,6 +6,8 @@ from typing import Callable, List, Optional, Union
 # pylint: disable=no-name-in-module
 from aioesphomeapi.api_pb2 import (  # type: ignore[attr-defined]
     EventResponse,
+    LightCommandRequest,
+    LightStateResponse,
     ListEntitiesEventResponse,
     ListEntitiesLightResponse,
     ListEntitiesMediaPlayerResponse,
@@ -13,8 +15,6 @@ from aioesphomeapi.api_pb2 import (  # type: ignore[attr-defined]
     ListEntitiesRequest,
     ListEntitiesSelectResponse,
     ListEntitiesSwitchResponse,
-    LightCommandRequest,
-    LightStateResponse,
     MediaPlayerCommandRequest,
     MediaPlayerStateResponse,
     NumberCommandRequest,

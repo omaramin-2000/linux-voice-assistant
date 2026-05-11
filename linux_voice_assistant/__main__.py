@@ -201,11 +201,7 @@ async def main() -> None:
         type=float,
         default=2.0,
         metavar="SECONDS",
-        help=(
-            "Seconds to wait for peripherals to connect and register their "
-            "entities before HA enumerates the ESPHome API "
-            "(default: %(default)s; set 0 to skip)."
-        ),
+        help="Seconds to wait for peripherals to connect and register their entities before HA enumerates the ESPHome API (default: %(default)s; set 0 to skip).",
     )
     # ------------------------------------------------------------------
     parser.add_argument(

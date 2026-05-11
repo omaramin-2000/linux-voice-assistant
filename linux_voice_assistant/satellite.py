@@ -8,6 +8,7 @@ import shutil
 import threading
 import time
 from collections.abc import Iterable
+from functools import partial
 from typing import Any, Dict, List, Optional, Set, Union
 from urllib.parse import urlparse, urlunparse
 from urllib.request import urlopen
@@ -391,7 +392,7 @@ class VoiceSatelliteProtocol(APIServer):
                 effects=spec.effects,
                 supports_rgb=spec.supports_rgb,
                 supports_brightness=spec.supports_brightness,
-                on_changed=lambda oid=object_id: self._on_led_light_changed(oid),
+                on_changed=partial(self._on_led_light_changed, object_id),
             )
             self.state.entities.append(entity)
             self.state.led_light_entities[object_id] = entity
