@@ -54,5 +54,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY respeaker_2mic_hat.py ./
 
+# Make /app writable by the runtime user. lgpio creates notification
+# files (``.lgd-nfy-N``) in the process CWD at startup; since compose
+# runs this container as a non-root user for device-access reasons,
+# the default root-owned /app would block lgpio from initialising and
+# gpiozero would fall through every pin factory.
+RUN chmod a+w /app
+
 ENTRYPOINT ["python3", "respeaker_2mic_hat.py"]
 CMD []
