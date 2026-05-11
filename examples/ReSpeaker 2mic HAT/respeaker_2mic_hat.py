@@ -901,6 +901,14 @@ class LVAClient:
             status = data.get("status", "")
             if status == "connected":
                 self._state.update(ha_connected=True)
+                # If we were sitting in NOT_READY (because of an earlier
+                # disconnect or boot), transition back to IDLE now that HA
+                # is reachable again. Otherwise keep whatever pipeline state
+                # we're already tracking.
+                if self._state.assist_state == AssistState.NOT_READY:
+                    self._state.update(
+                        assist_state=AssistState.MUTED if self._state.muted else AssistState.IDLE,
+                    )
                 _LOGGER.info("Home Assistant connected")
             elif status == "getting_started":
                 _LOGGER.info("LVA starting up, waiting for HA …")
