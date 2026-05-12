@@ -23,11 +23,11 @@ LED behaviours
   media_playing    : dim green steady on all 3 LEDs
   not_ready/no_ha  : dim red pulse on all 3 LEDs
 
-The script registers an HA Light entity with LVA on connect (via the
-register_light command). HA-side changes flow back as light_command
-events: on/off, brightness scale all animations; effect "Loop" cycles
-all three LEDs through the HSV color wheel in unison; effect "None"
-holds a solid user color and skips pipeline animations.
+On connect the script registers an HA Light entity with LVA via the
+register_light command. Changes from HA flow back as light_command
+events. On/off and brightness scale every animation. The "Loop"
+effect cycles all three LEDs through the HSV color wheel in unison,
+and "None" holds a solid user color and skips pipeline animations.
 
 Button behaviour (context action — same priority as HA Voice PE centre button)
 -------------------------------------------------------------------------------
@@ -156,13 +156,13 @@ class AssistState(str, Enum):
     TIMER_RINGING = "timer_ringing"
     MEDIA_PLAYING = "media_player_playing"
     # Pseudo-states driven by the HA Light entity (not emitted by LVA).
-    OFF           = "off"     # Light entity is off — all LEDs dark.
-    STATIC        = "static"  # Effect "None" — hold solid user color.
-    LOOP          = "loop"    # Effect "Loop" — cycle all LEDs through hues.
+    OFF           = "off"     # Light entity is off; all LEDs dark.
+    STATIC        = "static"  # Effect "None": hold the solid user color.
+    LOOP          = "loop"    # Effect "Loop": cycle the LEDs through hues.
 
 
-# Effect names — must match the LEDLightEntity effects list registered
-# with LVA via register_light below.
+# Effect names. These must match the LEDLightEntity effects list that
+# the peripheral registers with LVA via register_light below.
 EFFECT_VOICE_ASSISTANT = "Voice Assistant"
 EFFECT_LOOP            = "Loop"
 EFFECT_NONE            = "None"
@@ -181,9 +181,9 @@ class SharedState:
         self.volume: float = 1.0
         self.timer_total_seconds: int = 0
         self.timer_seconds_left: int = 0
-        # HA-driven Light entity state. Defaults match the LEDLightEntity
-        # in LVA core, so the script does the right thing before any
-        # light_command arrives.
+        # Light entity state, driven by HA via light_command events.
+        # Defaults match the LEDLightEntity in LVA core so the script
+        # behaves sensibly before the first light_command arrives.
         self.light_is_on: bool = True
         self.light_brightness: float = 1.0
         self.light_red: float = 0.0
@@ -237,10 +237,13 @@ def _scale(color: RGB, factor: float) -> RGB:
 
 
 def _resolve(color: ColorSource) -> RGB:
-    """Accept either a fixed RGB tuple or a zero-arg callable returning one.
-    Animations that should track HA's user color pass the callable so the
-    color refreshes on every frame; animations using semantic colors pass
-    the tuple directly."""
+    """Return an RGB tuple from either a fixed value or a callable.
+
+    Animations that want to follow the user's HA color pass a callable
+    so each frame can pick up the latest value. Animations that use a
+    fixed semantic color (yellow for thinking, green for speaking, and
+    so on) pass the tuple directly.
+    """
     return color() if callable(color) else color
 
 
@@ -331,9 +334,9 @@ class LEDAnimator:
 
     def set_state(self, state: AssistState, force: bool = False) -> None:
         # HA Light entity overrides take precedence over pipeline state.
-        # ``force=True`` bypasses the no-op guard so a light_command can
-        # re-render with the new color/brightness/effect even when the
-        # underlying assist state hasn't changed.
+        # Pass force=True to bypass the no-op guard so a light_command
+        # can re-render with the new color, brightness, or effect even
+        # when the underlying assist state hasn't changed.
         snap = self._shared.snapshot
         if not snap["light_is_on"]:
             state = AssistState.OFF
@@ -350,7 +353,7 @@ class LEDAnimator:
         _LOGGER.debug("LED state → %s", state.value)
 
         if state == AssistState.OFF:
-            self._leds.off()  # No animation task — LEDs stay dark.
+            self._leds.off()  # No animation task; LEDs stay dark.
 
         elif state == AssistState.STATIC:
             self._task = asyncio.create_task(self._static())
@@ -365,13 +368,13 @@ class LEDAnimator:
             self._task = asyncio.create_task(self._pulse_all(DIM_RED))
 
         elif state == AssistState.WAKE_WORD:
-            # User color (HAVPE tinting) — flash on all 3 LEDs.
+            # Flash on all 3 LEDs in the user color (HAVPE style tint).
             self._task = asyncio.create_task(
                 self._flash_all(self._user_color, flashes=2, on_ms=120, off_ms=80)
             )
 
         elif state == AssistState.LISTENING:
-            # User color (HAVPE tinting) — chase across the LEDs.
+            # Chase across the LEDs in the user color (HAVPE style tint).
             self._task = asyncio.create_task(self._chase(self._user_color))
 
         elif state == AssistState.THINKING:
@@ -409,7 +412,7 @@ class LEDAnimator:
         else:
             self._task = asyncio.create_task(self._idle())
 
-    # Helpers that read HA-driven Light entity state from shared state.
+    # Helpers that read the HA Light entity state from shared state.
 
     def _user_color(self) -> RGB:
         snap = self._shared.snapshot
@@ -440,8 +443,10 @@ class LEDAnimator:
         self._leds.off()
 
     async def _static(self) -> None:
-        """Hold the user-set solid color while effect is "None".
-        One-shot render — set_state(force=True) re-renders on changes."""
+        """Hold the user's solid color while the effect is "None".
+
+        Renders once. set_state(force=True) re-renders on changes.
+        """
         self._leds.set_all(self._user_color())
         self._leds.show(self._brightness())
 
@@ -450,7 +455,7 @@ class LEDAnimator:
 
         Every LED shows the same hue at any given moment, so the strip
         reads as a single shifting color rather than a spread rainbow.
-        ``period`` seconds for one full revolution of the wheel.
+        period is the time in seconds for one full revolution.
         """
         while True:
             hue = (time.monotonic() / period) % 1.0
@@ -761,8 +766,8 @@ class LVAClient:
         ) as ws:
             _LOGGER.info("Connected to LVA peripheral API")
             # Register the LED Light entity with LVA so HA can control it.
-            # Repeat registrations across reconnects are no-ops on the LVA
-            # side, so it's safe to send this on every connect.
+            # LVA treats repeat registrations for the same object_id as a
+            # no-op, so it's safe to send this on every connect.
             await ws.send(json.dumps({
                 "command": "register_light",
                 "data": {
@@ -900,10 +905,10 @@ class LVAClient:
             status = data.get("status", "")
             if status == "connected":
                 self._state.update(ha_connected=True)
-                # If we were sitting in NOT_READY (because of an earlier
-                # disconnect or boot), transition back to IDLE now that HA
-                # is reachable again. Otherwise keep whatever pipeline state
-                # we're already tracking.
+                # If we were sitting in NOT_READY (from an earlier
+                # disconnect or from boot), transition back to IDLE now
+                # that HA is reachable again. Otherwise keep whatever
+                # pipeline state we're already tracking.
                 if self._state.assist_state == AssistState.NOT_READY:
                     self._state.update(
                         assist_state=AssistState.MUTED if self._state.muted else AssistState.IDLE,

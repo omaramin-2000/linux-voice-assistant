@@ -48,11 +48,11 @@ Feedback events emitted by LVA
   zeroconf              data: {"status": "getting_started" | "connected"}
   light_command         data: {"object_id": str, "state": bool, "brightness": float,
                               "red": float, "green": float, "blue": float, "effect": str}
-              Fired when HA changes a Light entity that a peripheral
+              Fires when HA changes a Light entity that a peripheral
               previously registered via register_light. The peripheral
-              matches on object_id and applies the new state. Effect
-              "Voice Assistant" runs pipeline animations; "None" holds
-              a solid user color.
+              matches on object_id and applies the new state. The
+              effect "Voice Assistant" runs the pipeline animations;
+              "None" holds a solid user color.
 
 Commands accepted from the peripheral container
 ------------------------------------------------
@@ -76,12 +76,12 @@ Commands accepted from the peripheral container
   button_long_press
   register_light    data: {"name": str, "object_id": str, "effects": [str],
                            "supports_rgb": bool, "supports_brightness": bool}
-              Peripheral declares an LED Light it wants exposed in HA.
-              LVA creates a matching ESPHome Light entity (visible as
-              ``light.<satellite>_<object_id>``) and routes HA-side
-              changes back to the peripheral as light_command events.
-              Send once after connecting; duplicate registrations for
-              the same object_id are ignored.
+              The peripheral declares an LED Light it wants exposed in
+              HA. LVA creates a matching ESPHome Light entity (visible
+              as light.<satellite>_<object_id>) and routes HA changes
+              back to the peripheral as light_command events. Send
+              once after connecting; duplicate registrations for the
+              same object_id are ignored.
 """
 
 from __future__ import annotations
@@ -450,8 +450,12 @@ class PeripheralAPIServer:
             self._register_light(msg.get("data") or {}, satellite)
 
     def _register_light(self, data: Dict[str, Any], satellite: Any) -> None:
-        """Register a peripheral-declared Light. Idempotent on object_id."""
-        from .models import LightRegistration  # local import avoids circular dep
+        """Register a Light declared by a peripheral.
+
+        Idempotent on object_id: repeat registrations (e.g. after a
+        peripheral reconnect) keep the existing entity and its state.
+        """
+        from .models import LightRegistration  # local import to avoid a cycle
 
         object_id = str(data.get("object_id", "")).strip()
         if not object_id:
@@ -463,8 +467,7 @@ class PeripheralAPIServer:
             return
 
         if any(spec.object_id == object_id for spec in state.pending_lights):
-            # Repeat registration (e.g. peripheral reconnect). The existing
-            # entity keeps its state; nothing to do.
+            # Same light already on file; nothing to do.
             return
 
         spec = LightRegistration(
@@ -477,9 +480,9 @@ class PeripheralAPIServer:
         state.pending_lights.append(spec)
         _LOGGER.info("Light registered: %s (effects=%s)", object_id, spec.effects)
 
-        # If the satellite is already running, materialise the entity now
-        # so subsequent messages route correctly. HA still won't see it
-        # until next reconnect, but the rest of LVA stays consistent.
+        # If the satellite is already running, materialise the entity
+        # now so future messages route correctly. HA only sees it
+        # after the integration reconnects, but LVA stays consistent.
         if satellite is not None:
             satellite.register_pending_lights()
 

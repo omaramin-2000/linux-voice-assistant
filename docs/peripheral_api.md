@@ -141,13 +141,13 @@ These are all the events LVA emits. Your peripheral script receives them and rea
 | `volume_changed` | `{"volume": float}` | The speaker volume changed (0.0–1.0). Update any volume display or indicator ring. |
 | `volume_muted` | `{"muted": bool}` | The media player mute state changed. Distinct from microphone mute (`muted` event). |
 
-### HA-driven entity events
+### HA driven entity events
 
-These events fire when a user changes a peripheral-registered HA entity from Home Assistant. Use them to apply the user's preferences to your hardware in real time.
+These events fire when a user changes a peripheral registered HA entity from Home Assistant. Use them to apply the user's preferences to your hardware in real time.
 
 | Event | Data | Description |
 |-------|------|-------------|
-| `light_command` | `{"object_id": str, "state": bool, "brightness": float, "red": float, "green": float, "blue": float, "effect": str}` | An HA Light entity registered by a peripheral via `register_light` was changed. The event is broadcast to all connected peripherals — filter on `object_id` to route it to the right hardware. `brightness` and RGB values are 0.0–1.0. `effect` is one of the strings declared when the Light was registered (`"None"` is the conventional way to signal "no animation, hold the user color"). |
+| `light_command` | `{"object_id": str, "state": bool, "brightness": float, "red": float, "green": float, "blue": float, "effect": str}` | An HA Light entity that a peripheral registered via `register_light` was changed. The event is broadcast to every connected peripheral, so filter on `object_id` to route it to the right hardware. `brightness` and RGB values are 0.0 to 1.0. `effect` is one of the strings declared when the Light was registered (`"None"` is the conventional way to signal "no animation, hold the user color"). |
 
 ---
 

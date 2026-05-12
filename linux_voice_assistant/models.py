@@ -65,9 +65,9 @@ class AvailableWakeWord:
 class LightRegistration:
     """Capabilities a peripheral declares for one of its Light entities.
 
-    Sent by the peripheral via the ``register_light`` command after
-    connecting; LVA materialises a matching ``LEDLightEntity`` so HA
-    can control it.
+    The peripheral sends this with the register_light command after
+    connecting. LVA materialises a matching LEDLightEntity so HA can
+    control it.
     """
 
     name: str
@@ -127,12 +127,12 @@ class ServerState:
     thinking_sound_entity: "Optional[ThinkingSoundEntity]" = None
     button_event_sensor_entity: "Optional[ButtonEventSensorEntity]" = None
 
-    # Lights declared by peripherals via register_light. Lives across
-    # HA reconnections so the satellite can instantiate matching entities
-    # whenever it (re)initialises.
+    # Lights declared by peripherals via register_light. Survives HA
+    # reconnects so the satellite can rebuild its entities whenever it
+    # is constructed again.
     pending_lights: "List[LightRegistration]" = field(default_factory=list)
-    # Materialised LightEntities, keyed by object_id for routing
-    # light_command events back to the right peripheral hardware.
+    # Materialised LightEntities keyed by object_id, so light_command
+    # events can be routed back to the right peripheral hardware.
     led_light_entities: "Dict[str, LEDLightEntity]" = field(default_factory=dict)
 
     # Optional peripheral WebSocket API (LEDs, buttons, HAT boards).

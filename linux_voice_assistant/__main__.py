@@ -501,9 +501,10 @@ async def main() -> None:
         # Give peripherals a window to connect and register their Light
         # entities before HA enumerates over the ESPHome native API. The
         # ESPHome server is bound but not yet serving (serve_forever runs
-        # below), so HA's connection sits queued in the kernel during
-        # this wait. Late-registering peripherals require an HA reload
-        # to appear; this wait keeps zero-friction first-boot setups.
+        # below), so any HA connection sits queued in the kernel for the
+        # duration of this wait. Peripherals that register later still
+        # work, but the new entities only show up in HA after the
+        # integration reconnects.
         if args.peripheral_startup_wait > 0:
             _LOGGER.info(
                 "Waiting %.1fs for peripherals to register entities…",

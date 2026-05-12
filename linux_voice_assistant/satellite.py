@@ -331,8 +331,8 @@ class VoiceSatelliteProtocol(APIServer):
 
         self.state.button_event_sensor_entity.server = self
 
-        # Materialise any Light entities peripherals registered before
-        # this satellite was constructed, plus reattach existing ones.
+        # Materialise the Light entities peripherals registered before
+        # this satellite was constructed (or reattach existing ones).
         self.register_pending_lights()
 
         # ---- Instance variables ----
@@ -368,16 +368,16 @@ class VoiceSatelliteProtocol(APIServer):
             api.emit_event_sync(event, data)
 
     def register_pending_lights(self) -> None:
-        """Materialise LightEntities for peripheral-registered lights.
+        """Materialise LightEntities for peripheral registered lights.
 
-        Called from ``__init__`` so entities exist by the time HA enumerates,
-        and from the peripheral_api command dispatcher so newly registered
-        lights become available within the running satellite (HA still won't
-        see them until its next reconnect, but state stays consistent).
+        Called from __init__ so entities exist by the time HA enumerates,
+        and again from the peripheral_api dispatcher when a light arrives
+        after the satellite is already running. HA only sees a late
+        registration after its next reconnect, but LVA stays consistent.
         """
         for spec in self.state.pending_lights:
             if spec.object_id in self.state.led_light_entities:
-                # Already materialised. Re-attach server in case the
+                # Already materialised. Reattach the server in case the
                 # satellite has been reconstructed (HA reconnect).
                 self.state.led_light_entities[spec.object_id].server = self
                 if self.state.led_light_entities[spec.object_id] not in self.state.entities:
@@ -399,10 +399,10 @@ class VoiceSatelliteProtocol(APIServer):
             self.state.led_light_entities[object_id] = entity
 
     def _on_led_light_changed(self, object_id: str) -> None:
-        """Forward HA Light entity changes to peripherals as light_command.
+        """Forward an HA Light entity change to peripherals as light_command.
 
-        Routed by object_id so peripherals that registered multiple lights
-        can dispatch the right one to the right hardware.
+        The event carries object_id so a peripheral that registered more
+        than one light can route it to the correct hardware.
         """
         entity = self.state.led_light_entities.get(object_id)
         if entity is None:
@@ -454,11 +454,11 @@ class VoiceSatelliteProtocol(APIServer):
     def _set_muted(self, new_state: bool) -> None:
         self.state.muted = bool(new_state)
 
-        # Always notify peripherals of the mute boolean so their local view
-        # stays in sync. MUTED/IDLE below describe the animator state, but
-        # only volume_muted carries the muted flag — without this, a
-        # peripheral's cached "muted" would get stuck after the first mute
-        # and the button could never re-mute.
+        # Broadcast the mute boolean so peripherals can keep their cached
+        # mute state in sync. The MUTED and IDLE events below describe the
+        # animator state; only volume_muted carries the actual boolean,
+        # and without it a peripheral has no way to learn that we just
+        # came back from muted.
         self._emit(LVAEvent.VOLUME_MUTED, {"muted": self.state.muted})
 
         if self.state.muted:

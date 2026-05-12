@@ -621,11 +621,11 @@ class StopWordSensitivityNumberEntity(ESPHomeEntity):
 class LEDLightEntity(ESPHomeEntity):
     """RGB Light entity for peripheral LEDs.
 
-    Capabilities (effects, RGB support, brightness support) are declared
-    by the peripheral via ``register_light``. State changes from HA fire
-    ``on_changed`` so the peripheral API server can broadcast a
-    ``light_command`` event back to the originating peripheral, which
-    applies the new state to its hardware.
+    The peripheral declares its capabilities (effects, RGB, brightness)
+    via the register_light command. When Home Assistant changes the
+    entity, on_changed fires so the peripheral API server can broadcast
+    a light_command event back to the peripheral, which applies the
+    new state to its hardware.
     """
 
     def __init__(
@@ -668,9 +668,11 @@ class LEDLightEntity(ESPHomeEntity):
         return ColorMode.ON_OFF
 
     def state_dict(self) -> dict:
-        """JSON-serialisable state for the light_command event payload.
-        Includes object_id so peripherals can route events to the right
-        hardware when more than one Light is registered."""
+        """Payload for the light_command event.
+
+        Includes object_id so a peripheral that registered more than one
+        Light can route the event to the right hardware.
+        """
         return {
             "object_id": self.object_id,
             "state": self.is_on,
@@ -762,12 +764,13 @@ class ButtonEventSensorEntity(ESPHomeEntity):
                 event_types=self.event_types,
             )
         elif isinstance(msg, SubscribeHomeAssistantStatesRequest):
-            # Event entities don't have a steady "current state" — they emit
-            # when an event occurs. Sending an EventResponse with an empty
-            # event_type during the subscribe handshake makes HA reject the
-            # state ("Invalid event type  for event.<name>_button_press")
-            # which cascades into the whole ESPHome config entry failing
-            # to load. Only emit if a press has actually been recorded.
+            # Event entities don't have a steady "current state": they
+            # emit when an event fires. Sending an EventResponse with an
+            # empty event_type during the subscribe handshake makes HA
+            # reject the state ("Invalid event type for
+            # event.<name>_button_press"), which then cascades into the
+            # whole ESPHome config entry failing to load. Only yield
+            # once a press has actually been recorded.
             if self._current_event:
                 yield self._get_state_message()
 
