@@ -453,7 +453,7 @@ async def main() -> None:
                 message = "address already in use"
             if attempt < max_attempts:
                 _LOGGER.warning(
-                    "Attempt %d/%d failed to bind on address (%s, %s): %s. " "Retrying in 1 second...",
+                    "Attempt %d/%d failed to bind on address (%s, %s): %s. Retrying in 1 second...",
                     attempt,
                     max_attempts,
                     host_ip_address,

@@ -210,7 +210,7 @@ class PeripheralAPIServer:
         try:
             from websockets.server import serve  # type: ignore[import]
         except ImportError:
-            _LOGGER.error("websockets package not installed – peripheral API disabled. " "Install with: pip install websockets")
+            _LOGGER.error("websockets package not installed – peripheral API disabled. Install with: pip install websockets")
             return
 
         self._loop = asyncio.get_running_loop()
