@@ -583,6 +583,12 @@ class ButtonHandler:
             return
 
         self._multipress = multipress
+        if multipress is not None:
+            # The context action is the single-click outcome of the
+            # multipress state machine, not a press-down event. This
+            # matches HAVPE: a double or triple click should not fire
+            # the single-click action on each individual press.
+            multipress.set_single_click_action(self._on_press)
         self._button = Button(BTN_ACTION, pull_up=True, bounce_time=BTN_DEBOUNCE_MS / 1000.0)
         self._button.when_pressed = self._on_button_pressed  # type: ignore[union-attr]
         if multipress is not None:
@@ -595,12 +601,14 @@ class ButtonHandler:
             self._button = None
 
     def _on_button_pressed(self) -> None:
-        # Feed the multipress detector first so a quick double or triple
-        # press still gets its sound, then run the context action that
-        # fires on every press down (mute toggle, stop pipeline, etc.).
         if self._multipress is not None:
+            # The detector decides when (and whether) to fire the
+            # context action, based on how many presses arrive.
             self._multipress.on_press()
-        self._on_press()
+        else:
+            # Fallback when the detector is not wired: fire the context
+            # action immediately on press down.
+            self._on_press()
 
     def _send(self, command: str) -> None:
         _LOGGER.info("Button → %s", command)
@@ -610,12 +618,18 @@ class ButtonHandler:
 
     def _on_press(self) -> None:
         """
-        Context-sensitive action — mirrors HA Voice PE centre button priority:
+        Context-sensitive single-click action, mirroring the HA Voice PE
+        centre button priority:
+
           1. Timer ringing              → stop_timer_ringing
           2. Pipeline active            → stop_pipeline
              (wake word / listening / thinking / speaking)
           3. Media playing              → stop_media_player
           4. Idle / anything else       → toggle mute
+
+        Fires after the multipress window resolves with exactly one
+        press recorded, so a double or triple click does not also fire
+        this action.
         """
         assist = self._state.assist_state
 
@@ -658,6 +672,13 @@ class ButtonMultipressHandler:
         self._last_press_time = 0.0
         self._press_timer: Optional[threading.Timer] = None
         self._lock = threading.Lock()
+        self._single_click_action: Optional[Callable[[], None]] = None
+
+    def set_single_click_action(self, action: Callable[[], None]) -> None:
+        """Register the callback that runs when the multipress window
+        closes with exactly one press recorded. Called from the timer
+        thread, not the event loop."""
+        self._single_click_action = action
 
     def _send(self, command: str) -> None:
         _LOGGER.info("Button → %s", command)
@@ -666,13 +687,17 @@ class ButtonMultipressHandler:
         )
 
     def _on_multipress_timeout(self) -> None:
-        """Called when multipress window expires; emit appropriate command."""
+        """Multipress window expired; dispatch based on the press count."""
         with self._lock:
             count = self._press_count
             self._press_count = 0
             self._press_timer = None
 
-        if count == 2:
+        if count == 1:
+            _LOGGER.debug("Single click resolved")
+            if self._single_click_action is not None:
+                self._single_click_action()
+        elif count == 2:
             _LOGGER.debug("Double press detected")
             self._send("button_double_press")
         elif count >= 3:
