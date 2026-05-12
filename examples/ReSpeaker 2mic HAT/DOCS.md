@@ -118,12 +118,12 @@ Idle single press toggles mic mute (matching HA Voice PE's centre button default
 
 ### Multi-press gestures
 
-Detected via press timing within a detection window (500 ms between releases):
+Detected via press timing within a detection window (250 ms between releases, matching the HAVPE centre button):
 
 | Gesture | Timing | Command sent |
 |---|---|---|
-| **Double press** | 2 presses < 500 ms apart | `button_double_press` |
-| **Triple press** | 3 presses < 500 ms apart | `button_triple_press` |
+| **Double press** | 2 presses < 250 ms apart | `button_double_press` |
+| **Triple press** | 3 presses < 250 ms apart | `button_triple_press` |
 | **Long press** | Single press held > 1000 ms | `button_long_press` |
 
 Each gesture also plays its own short confirmation sound on the satellite speaker (`button_double_press.flac`, `button_triple_press.flac`, `button_long_press.flac`) so the user gets immediate feedback that the gesture was detected. The sound files are configurable via `--button-double-press-sound`, `--button-triple-press-sound`, and `--button-long-press-sound`.

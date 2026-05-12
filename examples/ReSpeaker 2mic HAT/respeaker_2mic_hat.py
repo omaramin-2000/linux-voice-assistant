@@ -40,8 +40,8 @@ Button behaviour (context action — same priority as HA Voice PE centre button)
     idle / anything else        → toggle mute (mute_mic / unmute_mic)
 
   Multi-press (detected via timing):
-    double press (< 500ms between releases)  → button_double_press
-    triple press (< 500ms between releases)  → button_triple_press
+    double press (< 250ms between releases)  → button_double_press
+    triple press (< 250ms between releases)  → button_triple_press
     long press (held > 1000ms)               → button_long_press
 
 Install dependencies
@@ -117,11 +117,13 @@ LED_BRIGHTNESS    = 0.6        # 0.0–1.0 default brightness
 
 # GPIO
 BTN_ACTION        = 17         # The single onboard button
-BTN_DEBOUNCE_MS   = 150
+BTN_DEBOUNCE_MS   = 30         # Mechanical bounce, fits inside the 250 ms multi-press window
 
-# Button multipress timing (milliseconds)
-MULTIPRESS_TIMEOUT_MS = 500    # Time window between presses to detect multi-press
-LONG_PRESS_MS         = 1000   # Duration to detect long press
+# Button multipress timing (milliseconds). Matches HAVPE's on_multi_click
+# configuration: presses count toward the same gesture if they fall within
+# 250 ms of each other, and a hold of 1 s registers as a long press.
+MULTIPRESS_TIMEOUT_MS = 250
+LONG_PRESS_MS         = 1000
 
 RECONNECT_DELAY_S = 3.0
 
