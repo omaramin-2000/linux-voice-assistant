@@ -405,6 +405,10 @@ class VoiceSatelliteProtocol(APIServer):
     def _set_muted(self, new_state: bool) -> None:
         self.state.muted = bool(new_state)
 
+        # Carry the boolean back to peripherals. MUTED and IDLE below
+        # only describe the animator state.
+        self._emit(LVAEvent.VOLUME_MUTED, {"muted": self.state.muted})
+
         if self.state.muted:
             # voice_assistant.stop behavior
             _LOGGER.debug("Muting voice assistant (voice_assistant.stop)")
