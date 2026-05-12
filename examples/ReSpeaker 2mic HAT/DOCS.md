@@ -126,6 +126,8 @@ Detected via press timing within a detection window (500 ms between releases):
 | **Triple press** | 3 presses < 500 ms apart | `button_triple_press` |
 | **Long press** | Single press held > 1000 ms | `button_long_press` |
 
+Each gesture also plays its own short confirmation sound on the satellite speaker (`button_double_press.flac`, `button_triple_press.flac`, `button_long_press.flac`) so the user gets immediate feedback that the gesture was detected. The sound files are configurable via `--button-double-press-sound`, `--button-triple-press-sound`, and `--button-long-press-sound`.
+
 Multi-press commands are useful for triggering custom Home Assistant automations. For example:
 - Double press → start a specific routine or mode
 - Triple press → access a menu or configuration option

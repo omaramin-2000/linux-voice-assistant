@@ -573,20 +573,32 @@ class ButtonHandler:
         self._loop = loop
         self._queue = command_queue
         self._button: Optional[object] = None
+        self._multipress: Optional["ButtonMultipressHandler"] = None
 
-    def setup(self) -> None:
+    def setup(self, multipress: Optional["ButtonMultipressHandler"] = None) -> None:
         if not _HAS_GPIO:
             _LOGGER.warning("GPIO unavailable – button not configured")
             return
 
+        self._multipress = multipress
         self._button = Button(BTN_ACTION, pull_up=True, bounce_time=BTN_DEBOUNCE_MS / 1000.0)
-        self._button.when_pressed = self._on_press  # type: ignore[union-attr]
+        self._button.when_pressed = self._on_button_pressed  # type: ignore[union-attr]
+        if multipress is not None:
+            self._button.when_released = multipress.on_release  # type: ignore[union-attr]
         _LOGGER.info("Button configured (gpiozero BCM %d)", BTN_ACTION)
 
     def cleanup(self) -> None:
         if self._button is not None:
             self._button.close()  # type: ignore[union-attr]
             self._button = None
+
+    def _on_button_pressed(self) -> None:
+        # Feed the multipress detector first so a quick double or triple
+        # press still gets its sound, then run the context action that
+        # fires on every press down (mute toggle, stop pipeline, etc.).
+        if self._multipress is not None:
+            self._multipress.on_press()
+        self._on_press()
 
     def _send(self, command: str) -> None:
         _LOGGER.info("Button → %s", command)
@@ -953,8 +965,10 @@ async def async_main(host: str, port: int) -> None:
 
     client   = LVAClient(host, port, state, animator, command_queue)
 
-    # Start hardware
-    buttons.setup()
+    # Start hardware. The button handler dispatches press events to the
+    # multipress detector so double, triple, and long presses fire their
+    # corresponding sounds on LVA.
+    buttons.setup(multipress)
 
     # Show "not ready" until LVA connects
     animator.set_state(AssistState.NOT_READY)
