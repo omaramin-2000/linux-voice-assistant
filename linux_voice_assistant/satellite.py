@@ -454,6 +454,13 @@ class VoiceSatelliteProtocol(APIServer):
     def _set_muted(self, new_state: bool) -> None:
         self.state.muted = bool(new_state)
 
+        # Always notify peripherals of the mute boolean so their local view
+        # stays in sync. MUTED/IDLE below describe the animator state, but
+        # only volume_muted carries the muted flag — without this, a
+        # peripheral's cached "muted" would get stuck after the first mute
+        # and the button could never re-mute.
+        self._emit(LVAEvent.VOLUME_MUTED, {"muted": self.state.muted})
+
         if self.state.muted:
             # voice_assistant.stop behavior
             _LOGGER.debug("Muting voice assistant (voice_assistant.stop)")
