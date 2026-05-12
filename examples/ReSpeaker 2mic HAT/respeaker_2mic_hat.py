@@ -117,11 +117,9 @@ LED_BRIGHTNESS    = 0.6        # 0.0–1.0 default brightness
 
 # GPIO
 BTN_ACTION        = 17         # The single onboard button
-BTN_DEBOUNCE_MS   = 30         # Mechanical bounce, fits inside the 250 ms multi-press window
+BTN_DEBOUNCE_MS   = 30         # Mechanical bounce; well inside the 250 ms gesture window.
 
-# Button multipress timing (milliseconds). Matches HAVPE's on_multi_click
-# configuration: presses count toward the same gesture if they fall within
-# 250 ms of each other, and a hold of 1 s registers as a long press.
+# Button gesture timing in milliseconds, matching HAVPE's on_multi_click.
 MULTIPRESS_TIMEOUT_MS = 250
 LONG_PRESS_MS         = 1000
 
@@ -584,10 +582,8 @@ class ButtonHandler:
 
         self._multipress = multipress
         if multipress is not None:
-            # The context action is the single-click outcome of the
-            # multipress state machine, not a press-down event. This
-            # matches HAVPE: a double or triple click should not fire
-            # the single-click action on each individual press.
+            # Let the multipress state machine call the context action
+            # when (and only when) a single click resolves.
             multipress.set_single_click_action(self._on_press)
         self._button = Button(BTN_ACTION, pull_up=True, bounce_time=BTN_DEBOUNCE_MS / 1000.0)
         self._button.when_pressed = self._on_button_pressed  # type: ignore[union-attr]
@@ -602,12 +598,11 @@ class ButtonHandler:
 
     def _on_button_pressed(self) -> None:
         if self._multipress is not None:
-            # The detector decides when (and whether) to fire the
-            # context action, based on how many presses arrive.
+            # The detector dispatches the context action itself once
+            # the gesture resolves.
             self._multipress.on_press()
         else:
-            # Fallback when the detector is not wired: fire the context
-            # action immediately on press down.
+            # No detector wired: fire immediately on press down.
             self._on_press()
 
     def _send(self, command: str) -> None:
@@ -617,19 +612,16 @@ class ButtonHandler:
         )
 
     def _on_press(self) -> None:
-        """
-        Context-sensitive single-click action, mirroring the HA Voice PE
-        centre button priority:
+        """Single-click action, mirroring the HA Voice PE centre button.
+
+        Fires once the multipress window resolves with a single press,
+        so a double or triple click does not also trigger this. Priority:
 
           1. Timer ringing              → stop_timer_ringing
           2. Pipeline active            → stop_pipeline
              (wake word / listening / thinking / speaking)
           3. Media playing              → stop_media_player
           4. Idle / anything else       → toggle mute
-
-        Fires after the multipress window resolves with exactly one
-        press recorded, so a double or triple click does not also fire
-        this action.
         """
         assist = self._state.assist_state
 
@@ -675,9 +667,8 @@ class ButtonMultipressHandler:
         self._single_click_action: Optional[Callable[[], None]] = None
 
     def set_single_click_action(self, action: Callable[[], None]) -> None:
-        """Register the callback that runs when the multipress window
-        closes with exactly one press recorded. Called from the timer
-        thread, not the event loop."""
+        """Callback fired when the gesture resolves as a single click.
+        Invoked from the timer thread."""
         self._single_click_action = action
 
     def _send(self, command: str) -> None:
@@ -992,9 +983,8 @@ async def async_main(host: str, port: int) -> None:
 
     client   = LVAClient(host, port, state, animator, command_queue)
 
-    # Start hardware. The button handler dispatches press events to the
-    # multipress detector so double, triple, and long presses fire their
-    # corresponding sounds on LVA.
+    # Wire the button into the multipress detector so double, triple,
+    # and long presses fire their sounds on LVA.
     buttons.setup(multipress)
 
     # Show "not ready" until LVA connects
