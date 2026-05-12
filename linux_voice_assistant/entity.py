@@ -764,13 +764,9 @@ class ButtonEventSensorEntity(ESPHomeEntity):
                 event_types=self.event_types,
             )
         elif isinstance(msg, SubscribeHomeAssistantStatesRequest):
-            # Event entities don't have a steady "current state": they
-            # emit when an event fires. Sending an EventResponse with an
-            # empty event_type during the subscribe handshake makes HA
-            # reject the state ("Invalid event type for
-            # event.<name>_button_press"), which then cascades into the
-            # whole ESPHome config entry failing to load. Only yield
-            # once a press has actually been recorded.
+            # Wait until a press fires: yielding with an empty
+            # event_type makes HA reject the state and fail the
+            # whole ESPHome config entry to load.
             if self._current_event:
                 yield self._get_state_message()
 

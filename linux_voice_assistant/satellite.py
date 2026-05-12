@@ -454,11 +454,8 @@ class VoiceSatelliteProtocol(APIServer):
     def _set_muted(self, new_state: bool) -> None:
         self.state.muted = bool(new_state)
 
-        # Broadcast the mute boolean so peripherals can keep their cached
-        # mute state in sync. The MUTED and IDLE events below describe the
-        # animator state; only volume_muted carries the actual boolean,
-        # and without it a peripheral has no way to learn that we just
-        # came back from muted.
+        # Carry the boolean back to peripherals. MUTED and IDLE below
+        # only describe the animator state.
         self._emit(LVAEvent.VOLUME_MUTED, {"muted": self.state.muted})
 
         if self.state.muted:
