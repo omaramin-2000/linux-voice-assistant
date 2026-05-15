@@ -734,9 +734,15 @@ class LVAClient:
             self._state.update(assist_state=AssistState.SPEAKING)
 
         elif event in ("tts_finished", "idle"):
-            # Return to muted indicator if still muted, otherwise idle
+            # Pick the indicator that should still be visible. A voice
+            # initiated timer produces this sequence: timer_ticking
+            # (countdown starts) -> tts_speaking (TTS confirms the
+            # timer) -> tts_finished (we land here). Going straight
+            # to IDLE would hide the countdown for the entire run.
             if self._state.muted:
                 self._state.update(assist_state=AssistState.MUTED)
+            elif self._state.timer_ends_at > time.monotonic():
+                self._state.update(assist_state=AssistState.TIMER_TICKING)
             else:
                 self._state.update(assist_state=AssistState.IDLE)
 
