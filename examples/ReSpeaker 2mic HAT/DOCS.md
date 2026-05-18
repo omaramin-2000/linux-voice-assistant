@@ -111,10 +111,7 @@ Context-aware command based on current state, mirroring the Home Assistant Voice
 | Timer ringing | `stop_timer_ringing` |
 | Wake word / listening / thinking / TTS speaking | `stop_pipeline` |
 | Music / media playing | `stop_media_player` |
-| Any other, currently unmuted | `mute_mic` |
-| Any other, currently muted | `unmute_mic` |
-
-Idle single press toggles mic mute (matching HA Voice PE's centre button default). To start a conversation, use the wake word ("Hey Jarvis" by default).
+| Any other (idle) | `start_listening` |
 
 ### Multi-press gestures
 
