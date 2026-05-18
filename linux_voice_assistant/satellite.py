@@ -8,6 +8,7 @@ import shutil
 import threading
 import time
 from collections.abc import Iterable
+from functools import partial
 from typing import Any, Dict, List, Optional, Set, Union
 from urllib.parse import urlparse, urlunparse
 from urllib.request import urlopen
@@ -17,6 +18,7 @@ from aioesphomeapi.api_pb2 import (  # type: ignore[attr-defined]
     AuthenticationRequest,
     DeviceInfoRequest,
     DeviceInfoResponse,
+    LightCommandRequest,
     ListEntitiesDoneResponse,
     ListEntitiesRequest,
     MediaPlayerCommandRequest,
@@ -49,6 +51,7 @@ from pyopen_wakeword import OpenWakeWord
 from .api_server import APIServer
 from .entity import (
     ButtonEventSensorEntity,
+    LEDLightEntity,
     MediaPlayerEntity,
     MicSettingEntity,
     MuteSwitchEntity,
@@ -91,13 +94,13 @@ class VoiceSatelliteProtocol(APIServer):
         if existing_media_players:
             # Keep the first instance and remove any extras.
             self.state.media_player_entity = existing_media_players[0]
-            for extra in existing_media_players[1:]:
-                self.state.entities.remove(extra)
+            for extra_player in existing_media_players[1:]:
+                self.state.entities.remove(extra_player)
 
         if existing_mute_switches:
-            self.state.mute_switch_entity = existing_mute_switches[0]  # type: ignore[assignment]
-            for extra in existing_mute_switches[1:]:  # type: ignore[index]
-                self.state.entities.remove(extra)
+            self.state.mute_switch_entity = existing_mute_switches[0]
+            for extra_mute in existing_mute_switches[1:]:
+                self.state.entities.remove(extra_mute)
 
         if self.state.media_player_entity is None:
             self.state.media_player_entity = MediaPlayerEntity(
@@ -140,9 +143,9 @@ class VoiceSatelliteProtocol(APIServer):
 
         existing_thinking_sound_switches = [entity for entity in self.state.entities if isinstance(entity, ThinkingSoundEntity)]
         if existing_thinking_sound_switches:
-            self.state.thinking_sound_entity = existing_thinking_sound_switches[0]  # type: ignore[assignment]
-            for extra in existing_thinking_sound_switches[1:]:  # type: ignore[index]
-                self.state.entities.remove(extra)
+            self.state.thinking_sound_entity = existing_thinking_sound_switches[0]
+            for extra_thinking in existing_thinking_sound_switches[1:]:
+                self.state.entities.remove(extra_thinking)
 
         # Add/update thinking sound entity
         thinking_sound_switch = self.state.thinking_sound_entity
@@ -328,6 +331,10 @@ class VoiceSatelliteProtocol(APIServer):
 
         self.state.button_event_sensor_entity.server = self
 
+        # Materialise the Light entities peripherals registered before
+        # this satellite was constructed (or reattach existing ones).
+        self.register_pending_lights()
+
         # ---- Instance variables ----
 
         self._is_streaming_audio = False
@@ -359,6 +366,48 @@ class VoiceSatelliteProtocol(APIServer):
         api = self.state.peripheral_api
         if api is not None:
             api.emit_event_sync(event, data)
+
+    def register_pending_lights(self) -> None:
+        """Materialise LightEntities for peripheral registered lights.
+
+        Called from __init__ so entities exist by the time HA enumerates,
+        and again from the peripheral_api dispatcher when a light arrives
+        after the satellite is already running. HA only sees a late
+        registration after its next reconnect, but LVA stays consistent.
+        """
+        for spec in self.state.pending_lights:
+            if spec.object_id in self.state.led_light_entities:
+                # Already materialised. Reattach the server in case the
+                # satellite has been reconstructed (HA reconnect).
+                self.state.led_light_entities[spec.object_id].server = self
+                if self.state.led_light_entities[spec.object_id] not in self.state.entities:
+                    self.state.entities.append(self.state.led_light_entities[spec.object_id])
+                continue
+
+            object_id = spec.object_id
+            entity = LEDLightEntity(
+                server=self,
+                key=len(self.state.entities),
+                name=spec.name,
+                object_id=object_id,
+                effects=spec.effects,
+                supports_rgb=spec.supports_rgb,
+                supports_brightness=spec.supports_brightness,
+                on_changed=partial(self._on_led_light_changed, object_id),
+            )
+            self.state.entities.append(entity)
+            self.state.led_light_entities[object_id] = entity
+
+    def _on_led_light_changed(self, object_id: str) -> None:
+        """Forward an HA Light entity change to peripherals as light_command.
+
+        The event carries object_id so a peripheral that registered more
+        than one light can route it to the correct hardware.
+        """
+        entity = self.state.led_light_entities.get(object_id)
+        if entity is None:
+            return
+        self._emit(LVAEvent.LIGHT_COMMAND, entity.state_dict())
 
     # ------------------------------------------------------------------
     # Mute / thinking sound
@@ -404,6 +453,10 @@ class VoiceSatelliteProtocol(APIServer):
 
     def _set_muted(self, new_state: bool) -> None:
         self.state.muted = bool(new_state)
+
+        # Carry the boolean back to peripherals. MUTED and IDLE below
+        # only describe the animator state.
+        self._emit(LVAEvent.VOLUME_MUTED, {"muted": self.state.muted})
 
         if self.state.muted:
             # voice_assistant.stop behavior
@@ -579,7 +632,7 @@ class VoiceSatelliteProtocol(APIServer):
 
         elif isinstance(
             msg,
-            (ListEntitiesRequest, SubscribeHomeAssistantStatesRequest, MediaPlayerCommandRequest, SwitchCommandRequest, NumberCommandRequest, SelectCommandRequest),
+            (ListEntitiesRequest, SubscribeHomeAssistantStatesRequest, MediaPlayerCommandRequest, SwitchCommandRequest, NumberCommandRequest, SelectCommandRequest, LightCommandRequest),
         ):
             for entity in self.state.entities:
                 yield from entity.handle_message(msg)
@@ -735,7 +788,7 @@ class VoiceSatelliteProtocol(APIServer):
             self.state.tts_player.stop()
             _LOGGER.debug("Stopping timer finished sound; will wake up in 1 s")
 
-            wake_word_phrase = wake_word.wake_word  # type: ignore
+            wake_word_phrase = wake_word.wake_word  # type: ignore[union-attr]
 
             def _delayed_wakeup() -> None:
                 if self.state.muted or self._pipeline_active:
@@ -760,7 +813,7 @@ class VoiceSatelliteProtocol(APIServer):
             _LOGGER.debug("Ignoring wake word - pipeline already active")
             return
 
-        wake_word_phrase = wake_word.wake_word  # type: ignore[attr-defined]
+        wake_word_phrase = wake_word.wake_word  # type: ignore[union-attr]
         _LOGGER.debug("Detected wake word: %s", wake_word_phrase)
 
         self._pipeline_active = True
