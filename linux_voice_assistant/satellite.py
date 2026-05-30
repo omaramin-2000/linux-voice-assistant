@@ -407,7 +407,7 @@ class VoiceSatelliteProtocol(APIServer):
 
         # Carry the boolean back to peripherals. MUTED and IDLE below
         # only describe the animator state.
-        self._emit(LVAEvent.VOLUME_MUTED, {"muted": self.state.muted})
+        self._emit(LVAEvent.MUTED, {"muted": self.state.muted})
 
         if self.state.muted:
             # voice_assistant.stop behavior
