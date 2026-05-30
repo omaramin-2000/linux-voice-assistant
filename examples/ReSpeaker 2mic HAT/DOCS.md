@@ -66,8 +66,8 @@ LED 0 sits above MIC_L and LED 2 sits above MIC_R. When the microphone is muted,
 |---|---|---|
 | Not ready / no HA connection | Dim red pulse | All 3 |
 | Idle | Off | All 3 off |
-| Wake word detected | Blue flash (×2) | All 3 |
-| Listening | Cyan chase (bouncing left ↔ right) | 1 at a time |
+| Wake word detected | Flash (×2) in user color | All 3 |
+| Listening | Chase (bouncing left ↔ right) in user color | 1 at a time |
 | Thinking | Yellow pulse | All 3 |
 | TTS speaking | Green breathe (slow sine) | All 3 |
 | **Muted** | **Solid red** | **LEDs 0 & 2 only (mic positions)** |
@@ -75,6 +75,26 @@ LED 0 sits above MIC_L and LED 2 sits above MIC_R. When the microphone is muted,
 | **Timer ringing** | **Blue flash (repeating)** | **All 3** |
 | Timer ticking | Dim cyan, brightness ∝ time left | All 3 |
 | Media playing | Dim green steady | All 3 |
+
+"User color" comes from the Home Assistant Light entity described below (default: HAVPE-style blue). HA brightness scales every animation in this table. Semantic colors (Thinking yellow, Speaking green, Muted red, Timer cyan/blue) are hardcoded so they remain recognisable across user customisation.
+
+---
+
+## Home Assistant Light entity
+
+On connect the controller registers a Light entity with LVA, which appears in Home Assistant as `light.<satellite>_leds`. From the device page you can toggle the LEDs, change their RGB color, adjust brightness, and pick an effect.
+
+### Effects
+
+| Effect | Behaviour |
+|---|---|
+| `Voice Assistant` (default) | Run the pipeline animations from the table above. Wake word and Listening are tinted with the HA color; brightness scales every animation. |
+| `Loop` | All three LEDs share the same hue and cycle through the HSV color wheel in unison. Five-second period. |
+| `None` | Pipeline animations are suppressed. The LEDs hold the user-set solid color at the user-set brightness. Useful as a static accent or notification surface for HA automations. |
+
+### Brightness, on/off, and color
+
+Turning the Light off in HA puts the LEDs dark immediately and stops every animation; turning it back on resumes whatever matches the current LVA state. Brightness scales linearly across all effects and animations. RGB color drives the Wake word / Listening tint when effect is `Voice Assistant`, and is the solid color when effect is `None`. The Loop effect ignores the user color (it spans the whole wheel by design) but still respects on/off and brightness.
 
 ---
 
@@ -95,13 +115,15 @@ Context-aware command based on current state, mirroring the Home Assistant Voice
 
 ### Multi-press gestures
 
-Detected via press timing within a detection window (500 ms between releases):
+Detected via press timing within a detection window (250 ms between releases, matching the HAVPE centre button):
 
 | Gesture | Timing | Command sent |
 |---|---|---|
-| **Double press** | 2 presses < 500 ms apart | `button_double_press` |
-| **Triple press** | 3 presses < 500 ms apart | `button_triple_press` |
+| **Double press** | 2 presses < 250 ms apart | `button_double_press` |
+| **Triple press** | 3 presses < 250 ms apart | `button_triple_press` |
 | **Long press** | Single press held > 1000 ms | `button_long_press` |
+
+Each gesture plays its own short confirmation sound on the satellite speaker so the user knows it was detected. Sound paths are configurable via `--button-double-press-sound`, `--button-triple-press-sound`, and `--button-long-press-sound`.
 
 Multi-press commands are useful for triggering custom Home Assistant automations. For example:
 - Double press → start a specific routine or mode
