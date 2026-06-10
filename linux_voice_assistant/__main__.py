@@ -71,6 +71,7 @@ async def main() -> None:
         action="store_true",
         help="List audio output devices and exit",
     )
+    parser.add_argument("--mic-volume", type=int, default=100, choices=list(range(1, 101)), help="Microphone volume level (1 to 100)")
     parser.add_argument("--mic-auto-gain", type=int, default=0, choices=list(range(32)))
     parser.add_argument("--mic-noise-suppression", type=int, default=0, choices=(0, 1, 2, 3, 4))
     parser.add_argument(
@@ -195,6 +196,13 @@ async def main() -> None:
         "--disable-peripheral-api",
         action="store_true",
         help="Disable the peripheral WebSocket API entirely",
+    )
+    parser.add_argument(
+        "--peripheral-startup-wait",
+        type=float,
+        default=2.0,
+        metavar="SECONDS",
+        help="Seconds to wait for peripherals to connect and register their entities before HA enumerates the ESPHome API (default: %(default)s; set 0 to skip).",
     )
     # ------------------------------------------------------------------
     parser.add_argument(
@@ -329,6 +337,8 @@ async def main() -> None:
             _LOGGER.exception("Extras for webrtc are not installed")
             sys.exit(1)
 
+    if args.mic_volume > 0.0:
+        preferences.mic_volume = args.mic_volume
     if args.mic_auto_gain > 0:
         preferences.mic_auto_gain = args.mic_auto_gain
 
@@ -446,7 +456,7 @@ async def main() -> None:
                 message = "address already in use"
             if attempt < max_attempts:
                 _LOGGER.warning(
-                    "Attempt %d/%d failed to bind on address (%s, %s): %s. " "Retrying in 1 second...",
+                    "Attempt %d/%d failed to bind on address (%s, %s): %s. Retrying in 1 second...",
                     attempt,
                     max_attempts,
                     host_ip_address,
@@ -490,6 +500,20 @@ async def main() -> None:
     if peripheral_api is not None:
         await peripheral_api.start()
         await peripheral_api.emit_event(LVAEvent.ZEROCONF, {"status": "getting_started"})
+
+        # Give peripherals a window to connect and register their Light
+        # entities before HA enumerates over the ESPHome native API. The
+        # ESPHome server is bound but not yet serving (serve_forever runs
+        # below), so any HA connection sits queued in the kernel for the
+        # duration of this wait. Peripherals that register later still
+        # work, but the new entities only show up in HA after the
+        # integration reconnects.
+        if args.peripheral_startup_wait > 0:
+            _LOGGER.info(
+                "Waiting %.1fs for peripherals to register entities…",
+                args.peripheral_startup_wait,
+            )
+            await asyncio.sleep(args.peripheral_startup_wait)
 
     try:
         async with server:  # type: ignore[union-attr]
