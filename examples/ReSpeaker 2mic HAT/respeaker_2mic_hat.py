@@ -24,10 +24,10 @@ LED behaviours
   not_ready/no_ha  : dim red pulse on all 3 LEDs
 
 On connect the script registers an HA Light entity with LVA via the
-register_light command. Changes from HA flow back as light_command
-events. On/off and brightness scale every animation. The "Loop"
-effect cycles all three LEDs through the HSV color wheel in unison,
-and "None" holds a solid user color and skips pipeline animations.
+register_light command, exposing a single "Voice Assistant" effect to
+match the HA Voice PE. Changes from HA flow back as light_command
+events: the user color tints the wake word and listening animations,
+and on/off and brightness scale every animation.
 
 Button behaviour (context action — same priority as HA Voice PE centre button)
 -------------------------------------------------------------------------------
@@ -66,7 +66,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import colorsys
 import json
 import logging
 import math
@@ -155,17 +154,15 @@ class AssistState(str, Enum):
     TIMER_TICKING = "timer_ticking"
     TIMER_RINGING = "timer_ringing"
     MEDIA_PLAYING = "media_player_playing"
-    # Pseudo-states driven by the HA Light entity (not emitted by LVA).
+    # Pseudo-state driven by the HA Light entity (not emitted by LVA).
     OFF           = "off"     # Light entity is off; all LEDs dark.
-    STATIC        = "static"  # Effect "None": hold the solid user color.
-    LOOP          = "loop"    # Effect "Loop": cycle the LEDs through hues.
 
 
-# Effect names. These must match the LEDLightEntity effects list that
-# the peripheral registers with LVA via register_light below.
+# Effect name. Must match the LEDLightEntity effects list the peripheral
+# registers with LVA via register_light below. Like the HA Voice PE, this
+# example exposes only the pipeline animations, which always run and
+# cannot be switched off from HA.
 EFFECT_VOICE_ASSISTANT = "Voice Assistant"
-EFFECT_LOOP            = "Loop"
-EFFECT_NONE            = "None"
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +186,6 @@ class SharedState:
         self.light_red: float = 0.0
         self.light_green: float = 0.2
         self.light_blue: float = 1.0
-        self.light_effect: str = EFFECT_VOICE_ASSISTANT
         # Monotonic deadline used by _timer_tick to fade brightness
         # smoothly between sparse timer_updated events.
         self.timer_ends_at: float = 0.0
@@ -221,7 +217,6 @@ class SharedState:
                 "light_red":           self.light_red,
                 "light_green":         self.light_green,
                 "light_blue":          self.light_blue,
-                "light_effect":        self.light_effect,
                 "timer_ends_at":       self.timer_ends_at,
             }
 
@@ -351,10 +346,6 @@ class LEDAnimator:
         snap = self._shared.snapshot
         if not snap["light_is_on"]:
             state = AssistState.OFF
-        elif snap["light_effect"] == EFFECT_NONE:
-            state = AssistState.STATIC
-        elif snap["light_effect"] == EFFECT_LOOP:
-            state = AssistState.LOOP
 
         if not force and self._current_state == state:
             return
@@ -365,12 +356,6 @@ class LEDAnimator:
 
         if state == AssistState.OFF:
             self._leds.off()  # No animation task; LEDs stay dark.
-
-        elif state == AssistState.STATIC:
-            self._task = asyncio.create_task(self._static())
-
-        elif state == AssistState.LOOP:
-            self._task = asyncio.create_task(self._loop())
 
         elif state == AssistState.IDLE:
             self._task = asyncio.create_task(self._idle())
@@ -452,28 +437,6 @@ class LEDAnimator:
 
     async def _idle(self) -> None:
         self._leds.off()
-
-    async def _static(self) -> None:
-        """Hold the user's solid color while the effect is "None".
-
-        Renders once. set_state(force=True) re-renders on changes.
-        """
-        self._leds.set_all(self._user_color())
-        self._leds.show(self._brightness())
-
-    async def _loop(self, period: float = 5.0) -> None:
-        """Cycle all 3 LEDs through the HSV color wheel in unison.
-
-        Every LED shows the same hue at any given moment, so the strip
-        reads as a single shifting color rather than a spread rainbow.
-        period is the time in seconds for one full revolution.
-        """
-        while True:
-            hue = (time.monotonic() / period) % 1.0
-            r, g, b = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
-            self._leds.set_all((int(r * 255), int(g * 255), int(b * 255)))
-            self._leds.show(self._brightness())
-            await asyncio.sleep(0.05)
 
     async def _steady_all(self, color: ColorSource, brightness: float = LED_BRIGHTNESS) -> None:
         self._leds.set_all(_resolve(color))
@@ -813,7 +776,7 @@ class LVAClient:
                 "data": {
                     "name": LIGHT_NAME,
                     "object_id": LIGHT_OBJECT_ID,
-                    "effects": [EFFECT_VOICE_ASSISTANT, EFFECT_LOOP, EFFECT_NONE],
+                    "effects": [EFFECT_VOICE_ASSISTANT],
                     "supports_rgb": True,
                     "supports_brightness": True,
                 },
@@ -965,7 +928,10 @@ class LVAClient:
 
         elif event == "light_command":
             # LVA broadcasts to every connected peripheral; only act on
-            # commands targeting our registered Light.
+            # commands targeting our registered Light. The Light exposes a
+            # single "Voice Assistant" effect, so there is no effect to
+            # switch on: we apply on/off, brightness, and color and let the
+            # pipeline animations run.
             if data.get("object_id") != LIGHT_OBJECT_ID:
                 return
             self._state.update(
@@ -974,7 +940,6 @@ class LVAClient:
                 light_red=float(data.get("red", 0.0)),
                 light_green=float(data.get("green", 0.2)),
                 light_blue=float(data.get("blue", 1.0)),
-                light_effect=str(data.get("effect", EFFECT_VOICE_ASSISTANT)),
             )
             self._animator.set_state(self._state.assist_state, force=True)
             return

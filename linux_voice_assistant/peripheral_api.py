@@ -51,8 +51,9 @@ Feedback events emitted by LVA
               Fires when HA changes a Light entity that a peripheral
               previously registered via register_light. The peripheral
               matches on object_id and applies the new state. The
-              effect "Voice Assistant" runs the pipeline animations;
-              "None" holds a solid user color.
+              effect names are those the peripheral declared at
+              registration; e.g. "Voice Assistant" runs the pipeline
+              animations.
 
 Commands accepted from the peripheral container
 ------------------------------------------------

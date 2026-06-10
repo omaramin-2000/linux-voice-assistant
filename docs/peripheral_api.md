@@ -147,7 +147,7 @@ These events fire when a user changes a peripheral registered HA entity from Hom
 
 | Event | Data | Description |
 |-------|------|-------------|
-| `light_command` | `{"object_id": str, "state": bool, "brightness": float, "red": float, "green": float, "blue": float, "effect": str}` | An HA Light entity that a peripheral registered via `register_light` was changed. The event is broadcast to every connected peripheral, so filter on `object_id` to route it to the right hardware. `brightness` and RGB values are 0.0 to 1.0. `effect` is one of the strings declared when the Light was registered (`"None"` is the conventional way to signal "no animation, hold the user color"). |
+| `light_command` | `{"object_id": str, "state": bool, "brightness": float, "red": float, "green": float, "blue": float, "effect": str}` | An HA Light entity that a peripheral registered via `register_light` was changed. The event is broadcast to every connected peripheral, so filter on `object_id` to route it to the right hardware. `brightness` and RGB values are 0.0 to 1.0. `effect` is one of the strings declared when the Light was registered. |
 
 ---
 
@@ -163,7 +163,7 @@ For HA to see your entity, your peripheral must register before HA enumerates th
 
 | Command | Data | Description |
 |---------|------|-------------|
-| `register_light` | `{"name": str, "object_id": str, "effects": [str], "supports_rgb": bool, "supports_brightness": bool}` | Register a Light entity for an LED strip, ring, or single LED. HA exposes it as `light.<satellite>_<object_id>` with on/off, brightness, RGB, and a selectable effect from the declared list. Subsequent HA changes are delivered as `light_command` events. Send once after connecting; repeat registrations for the same `object_id` are idempotent (no-op). Example: `{"command": "register_light", "data": {"name": "LEDs", "object_id": "leds", "effects": ["Voice Assistant", "None"], "supports_rgb": true, "supports_brightness": true}}` |
+| `register_light` | `{"name": str, "object_id": str, "effects": [str], "supports_rgb": bool, "supports_brightness": bool}` | Register a Light entity for an LED strip, ring, or single LED. HA exposes it as `light.<satellite>_<object_id>` with on/off, brightness, RGB, and a selectable effect from the declared list. Subsequent HA changes are delivered as `light_command` events. Send once after connecting; repeat registrations for the same `object_id` are idempotent (no-op). Example: `{"command": "register_light", "data": {"name": "LEDs", "object_id": "leds", "effects": ["Voice Assistant"], "supports_rgb": true, "supports_brightness": true}}` |
 
 ### Voice pipeline
 
