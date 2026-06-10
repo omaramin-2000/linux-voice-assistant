@@ -65,7 +65,7 @@ LED 0 sits above MIC_L and LED 2 sits above MIC_R. When the microphone is muted,
 | LVA state | Animation | LEDs |
 |---|---|---|
 | Not ready / no HA connection | Dim red pulse | All 3 |
-| Idle | Off | All 3 off |
+| Idle | Solid user color when the LED light is on, else off | All 3 |
 | Wake word detected | Flash (×2) in user color | All 3 |
 | Listening | Chase (bouncing left ↔ right) in user color | 1 at a time |
 | Thinking | Yellow pulse | All 3 |
@@ -82,7 +82,7 @@ LED 0 sits above MIC_L and LED 2 sits above MIC_R. When the microphone is muted,
 
 ## Home Assistant Light entity
 
-On connect the controller registers a Light entity with LVA, which appears in Home Assistant as `light.<satellite>_leds`. From the device page you can toggle the LEDs, change their RGB color, adjust brightness, and pick an effect.
+On connect the controller registers a Light entity with LVA, which appears in Home Assistant as `light.<satellite>_leds`. It defaults off, matching the Voice PE LED Ring; turn it on for a solid idle glow and set its RGB color and brightness from the device page.
 
 ### Effects
 
@@ -94,7 +94,7 @@ Like the Home Assistant Voice PE, this example exposes a single Voice Assistant 
 
 ### Brightness, on/off, and color
 
-Turning the Light off in HA puts the LEDs dark immediately and stops every animation; turning it back on resumes whatever matches the current LVA state. Brightness scales linearly across every animation. RGB color drives the Wake word / Listening tint.
+Matching the HA Voice PE LED Ring, the Light defaults off, so the LEDs stay dark while idle until you turn it on; once on, idle shows the solid color, and turning it off again just removes that idle glow. The voice animations always run either way (on/off only gates the idle glow, it does not disable them), so the effect can't be switched off completely. Brightness scales linearly across every animation, and RGB color is the solid idle color and tints the Wake word / Listening animations.
 
 ---
 

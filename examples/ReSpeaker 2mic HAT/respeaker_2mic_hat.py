@@ -11,7 +11,7 @@ Hardware layout
 
 LED behaviours
 --------------
-  idle             : all off
+  idle             : solid user color when the LED light is on, else dark
   wake_word        : brief flash on all 3 LEDs (user color from HA Light entity)
   listening        : chase across the LEDs (user color from HA Light entity)
   thinking         : yellow pulse on all 3 LEDs
@@ -25,9 +25,11 @@ LED behaviours
 
 On connect the script registers an HA Light entity with LVA via the
 register_light command, exposing a single "Voice Assistant" effect to
-match the HA Voice PE. Changes from HA flow back as light_command
-events: the user color tints the wake word and listening animations,
-and on/off and brightness scale every animation.
+match the HA Voice PE. Like the Voice PE LED Ring, the light defaults
+off: while idle the LEDs hold the user color when it is on and stay
+dark when it is off. The pipeline animations always run regardless,
+tinted by the user color, so turning the light off only removes the
+idle glow; brightness scales every animation.
 
 Button behaviour (context action — same priority as HA Voice PE centre button)
 -------------------------------------------------------------------------------
@@ -154,8 +156,6 @@ class AssistState(str, Enum):
     TIMER_TICKING = "timer_ticking"
     TIMER_RINGING = "timer_ringing"
     MEDIA_PLAYING = "media_player_playing"
-    # Pseudo-state driven by the HA Light entity (not emitted by LVA).
-    OFF           = "off"     # Light entity is off; all LEDs dark.
 
 
 # Effect name. Must match the LEDLightEntity effects list the peripheral
@@ -180,8 +180,10 @@ class SharedState:
         self.timer_seconds_left: int = 0
         # Light entity state, driven by HA via light_command events.
         # Defaults match the LEDLightEntity in LVA core so the script
-        # behaves sensibly before the first light_command arrives.
-        self.light_is_on: bool = True
+        # behaves sensibly before the first light_command arrives: off by
+        # default, like the Voice PE LED Ring, so idle stays dark until the
+        # user turns the light on.
+        self.light_is_on: bool = False
         self.light_brightness: float = 1.0
         self.light_red: float = 0.0
         self.light_green: float = 0.2
@@ -339,14 +341,10 @@ class LEDAnimator:
         self._current_state: AssistState = AssistState.NOT_READY
 
     def set_state(self, state: AssistState, force: bool = False) -> None:
-        # HA Light entity overrides take precedence over pipeline state.
-        # Pass force=True to bypass the no-op guard so a light_command
-        # can re-render with the new color, brightness, or effect even
-        # when the underlying assist state hasn't changed.
-        snap = self._shared.snapshot
-        if not snap["light_is_on"]:
-            state = AssistState.OFF
-
+        # Pass force=True to bypass the no-op guard so a light_command can
+        # re-render with the new color or brightness even when the assist
+        # state hasn't changed. The light's on/off only gates the idle glow
+        # (see _idle); pipeline animations always run, matching the Voice PE.
         if not force and self._current_state == state:
             return
         self._current_state = state
@@ -354,10 +352,7 @@ class LEDAnimator:
 
         _LOGGER.debug("LED state → %s", state.value)
 
-        if state == AssistState.OFF:
-            self._leds.off()  # No animation task; LEDs stay dark.
-
-        elif state == AssistState.IDLE:
+        if state == AssistState.IDLE:
             self._task = asyncio.create_task(self._idle())
 
         elif state == AssistState.NOT_READY:
@@ -436,7 +431,18 @@ class LEDAnimator:
     # ------------------------------------------------------------------
 
     async def _idle(self) -> None:
-        self._leds.off()
+        """Resting state, matching the HA Voice PE LED Ring.
+
+        Holds the user's color when the HA light is on and stays dark
+        when it is off (the light defaults off). Pipeline animations run
+        regardless, so turning the light off only removes this idle glow.
+        Renders once; set_state(force=True) re-renders on changes.
+        """
+        if self._shared.snapshot["light_is_on"]:
+            self._leds.set_all(self._user_color())
+            self._leds.show(self._brightness())
+        else:
+            self._leds.off()
 
     async def _steady_all(self, color: ColorSource, brightness: float = LED_BRIGHTNESS) -> None:
         self._leds.set_all(_resolve(color))
