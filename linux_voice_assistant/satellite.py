@@ -453,9 +453,6 @@ class VoiceSatelliteProtocol(APIServer):
 
     def _set_muted(self, new_state: bool) -> None:
         self.state.muted = bool(new_state)
-
-        # Carry the boolean back to peripherals. MUTED and IDLE below
-        # only describe the animator state.
         self._emit(LVAEvent.MUTED, {"muted": self.state.muted})
 
         if self.state.muted:
@@ -466,7 +463,6 @@ class VoiceSatelliteProtocol(APIServer):
             # Stop any ongoing voice processing
             self.state.stop_word.is_active = False  # type: ignore[attr-defined]
             self.state.tts_player.play(self.state.mute_sound)
-            self._emit(LVAEvent.MUTED)
         else:
             # voice_assistant.start_continuous behavior
             _LOGGER.debug("Unmuting voice assistant (voice_assistant.start_continuous)")
