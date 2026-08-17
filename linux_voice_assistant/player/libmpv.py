@@ -18,7 +18,7 @@ class LibMpvPlayer(AudioPlayer):
     - volume handling with ducking support
     """
 
-    def __init__(self, device: Optional[str] = None) -> None:
+    def __init__(self, device: Optional[str] = None, rawaudio: bool = False) -> None:
         self._log = logging.getLogger(self.__class__.__name__)
         self._state: PlayerState = PlayerState.IDLE
         self._state_lock = threading.Lock()
@@ -28,26 +28,32 @@ class LibMpvPlayer(AudioPlayer):
         self._duck_factor: float = 1.0  # 0.0 – 1.0
 
         # mpv setup
-        self._mpv = mpv.MPV(
+        mpv_kwargs = dict(
             audio_display=False,
             log_handler=self._on_mpv_log,
             loglevel="error",
-            cache="yes",
-            demuxer_max_bytes="32MiB",
-            cache_secs="20",
         )
+
+        if rawaudio:
+            # Real-time PCM stream from FIFO (Sendspin)
+            mpv_kwargs.update(
+                cache="no",
+                demuxer="rawaudio",
+                audio_buffer=0.2,   # smaller buffer = lower latency
+            )
+        else:
+            # Normal file/URL playback
+            mpv_kwargs.update(
+                cache="yes",
+                demuxer_max_bytes="32MiB",
+                cache_secs="20",
+                audio_buffer=0.8,   # larger buffer for reliable short sounds
+            )
+
+        self._mpv = mpv.MPV(**mpv_kwargs)
 
         if device:
             self._mpv["audio-device"] = device
-
-        # Pre-buffer audio before the sink starts clocking samples out.
-        # The default (0.2 s) is too tight for short notification sounds on
-        # PulseAudio/PipeWire: the sink stream takes a few ms to initialise
-        # and the very first samples are dropped before it is ready, making
-        # short files (<1 s) appear to start mid-way through.
-        # 0.8 s gives the output pipeline enough headroom without adding any
-        # noticeable latency for a user-facing notification sound.
-        self._mpv["audio-buffer"] = 0.8
 
         # Keep the PulseAudio/PipeWire stream open between files by outputting
         # silence when idle.  This eliminates the per-play sink re-initialisation
