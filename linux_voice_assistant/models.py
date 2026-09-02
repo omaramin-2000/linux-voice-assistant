@@ -108,6 +108,7 @@ class LocalTimer:
         now = time.monotonic() if now is None else now
         return now >= self.ends_at
 
+
 @dataclass
 class Preferences:
     active_wake_words: List[Optional[str]] = field(default_factory=list)
