@@ -845,6 +845,7 @@ def process_audio(state: ServerState, mic, block_size: int):
         _LOGGER.exception("Unexpected error processing audio")
         sys.exit(1)
 
+
 async def timer_watchdog(state: ServerState, interval: float = 1.0) -> None:
     """Poll local timer countdowns so timers can still ring if HA is unreachable."""
     while True:
