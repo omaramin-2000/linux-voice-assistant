@@ -855,6 +855,7 @@ async def timer_watchdog(state: ServerState, interval: float = 1.0) -> None:
             _LOGGER.exception("Unexpected error while checking local timers")
         await asyncio.sleep(interval)
 
+
 # -----------------------------------------------------------------------------
 
 
