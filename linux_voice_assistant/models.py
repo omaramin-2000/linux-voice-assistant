@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
     from .entity import (
         ButtonEventSensorEntity,
+        ButtonLockEntity,
         ESPHomeEntity,
         LEDLightEntity,
         MediaPlayerEntity,
@@ -114,6 +115,7 @@ class Preferences:
     active_wake_words: List[Optional[str]] = field(default_factory=list)
     volume: Optional[float] = None
     thinking_sound: int = 0  # 0 = disabled, 1 = enabled
+    button_controls_locked: int = 0  # 0 = buttons enabled (default), 1 = buttons locked
     wake_word_1_sensitivity: Optional[float] = None
     wake_word_2_sensitivity: Optional[float] = None
     stop_word_sensitivity: Optional[float] = None
@@ -186,6 +188,12 @@ class ServerState:
     # same timer both starting the ring loop.
     ringing_timer_id: Optional[str] = None
     timer_ring_start: Optional[float] = None
+    # True once a peripheral sends register_button_lock. Gates creation of
+    # ButtonLockEntity so the HA device page only shows the "Disable button
+    # controls" switch when hardware that actually supports it is present.
+    # Survives HA reconnects so the entity is re-registered automatically.
+    pending_button_lock: bool = False
+    button_lock_entity: "Optional[ButtonLockEntity]" = None
 
     # Optional peripheral WebSocket API (LEDs, buttons, HAT boards).
     # Assigned in __main__ before the event loop starts.
@@ -200,6 +208,7 @@ class ServerState:
     wake_words_changed: bool = False
     refractory_seconds: float = 2.0
     thinking_sound_enabled: bool = False
+    button_controls_locked: bool = False
     output_only: bool = False
     muted: bool = False
     connected: bool = False
