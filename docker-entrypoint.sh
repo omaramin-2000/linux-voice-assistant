@@ -136,6 +136,18 @@ if [ "$DISABLE_PERIPHERAL_API" = "1" ]; then
   EXTRA_ARGS+=( "--disable-peripheral-api" )
 fi
 
+if [ -n "${SENDSPIN_URL}" ]; then
+  EXTRA_ARGS+=( "--sendspin-url" "$SENDSPIN_URL" )
+fi
+
+if [ -n "${SENDSPIN_CLIENT_ID}" ]; then
+  EXTRA_ARGS+=( "--sendspin-client-id" "$SENDSPIN_CLIENT_ID" )
+fi
+
+if [ -n "${SENDSPIN_STATIC_DELAY_MS}" ]; then
+  EXTRA_ARGS+=( "--sendspin-static-delay-ms" "$SENDSPIN_STATIC_DELAY_MS" )
+fi
+
 if [ "$ENABLE_OUTPUT_ONLY" = "1" ]; then
   EXTRA_ARGS+=( "--output-only" )
 fi
