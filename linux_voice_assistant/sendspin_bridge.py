@@ -101,28 +101,35 @@ class _SoundCardOutputStream:
         self._thread.start()
 
     def _run(self) -> None:
-        while self._running:
-            frames = self._blocksize
-            sample_bytes = np.dtype(self._dtype).itemsize * self._channels
-            outdata = bytearray(frames * sample_bytes)
-            time_info = type("_CallbackTimeInfo", (), {"outputBufferDacTime": time.monotonic()})()
-            status = None
-            try:
-                self._callback(memoryview(outdata), frames, time_info, status)
-            except Exception:
-                _LOGGER.exception("Error in soundcard output callback")
-                outdata = b"\x00" * len(outdata)
-            try:
-                pcm = np.frombuffer(outdata, dtype=np.int16)
-                if self._channels == 1:
-                    self._speaker.play(pcm, samplerate=self._samplerate)
-                else:
-                    self._speaker.play(pcm.reshape(-1, self._channels), samplerate=self._samplerate)
-            except Exception:
-                _LOGGER.exception("Failed to play audio via soundcard")
-                self._running = False
-                break
-            time.sleep(max(frames / self._samplerate, 0.01))
+        try:
+            with self._speaker.player(
+                samplerate=self._samplerate,
+                channels=self._channels,
+                blocksize=self._blocksize,
+            ) as player:
+                while self._running:
+                    frames = self._blocksize
+                    sample_bytes = np.dtype(self._dtype).itemsize * self._channels
+                    outdata = bytearray(frames * sample_bytes)
+                    time_info = type("_CallbackTimeInfo", (), {"outputBufferDacTime": time.monotonic()})()
+                    status = None
+                    try:
+                        self._callback(memoryview(outdata), frames, time_info, status)
+                    except Exception:
+                        _LOGGER.exception("Error in soundcard output callback")
+                        outdata = b"\x00" * len(outdata)
+                    try:
+                        pcm_int16 = np.frombuffer(outdata, dtype=np.int16)
+                        pcm_float = pcm_int16.astype(np.float32) / 32768.0
+                        if self._channels == 1:
+                            player.play(pcm_float)
+                        else:
+                            player.play(pcm_float.reshape(-1, self._channels))
+                    except Exception:
+                        _LOGGER.exception("Failed to play audio via soundcard")
+                        break
+        except Exception:
+            _LOGGER.exception("Failed to open soundcard player stream")
 
     def stop(self) -> None:
         self._running = False
