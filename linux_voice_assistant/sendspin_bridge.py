@@ -950,6 +950,7 @@ class SendspinBridge:
         self._volume: int = 100
         self._muted: bool = False
         self._is_ducked: bool = False
+        self._pre_mute_volume: int = 100
 
         # Callback to notify when SendSpin starts playing
         self._on_sendspin_start: Callable[[], None] | None = None
