@@ -41,6 +41,7 @@ from .util import call_all
 
 if TYPE_CHECKING:
     from .sendspin_bridge import SendspinBridge
+
 SUPPORTED_MEDIA_PLAYER_FEATURES = (
     MediaPlayerEntityFeature.PLAY
     | MediaPlayerEntityFeature.PAUSE
@@ -99,11 +100,12 @@ class MediaPlayerEntity(ESPHomeEntity):
         bridge.set_on_sendspin_start(self._on_sendspin_start)
 
     def _on_sendspin_start(self) -> None:
-        """Called when SendSpin starts playing - pause HA music and report paused."""
+        """Called when SendSpin starts playing - pause HA music, report entity as playing."""
         if self.music_player.is_playing:
             self.music_player.pause()
-        # Report PAUSED to HA since HA's music is paused (SendSpin is playing)
-        self.server.send_messages([self._update_state(MediaPlayerState.PAUSED)])
+        # The entity's overall state should reflect actual audio output — Sendspin
+        # is playing even though the local mpv transport is paused underneath it.
+        self.server.send_messages([self._update_state(MediaPlayerState.PLAYING)])
 
     def _stop_sendspin_if_playing(self) -> None:
         """Stop SendSpin playback if it's active."""
@@ -121,7 +123,6 @@ class MediaPlayerEntity(ESPHomeEntity):
         """Resume SendSpin playback if it was paused."""
         if self.sendspin_bridge:
             self.sendspin_bridge.resume()
-
     def _broadcast_state(self, msgs: Iterable[message.Message]) -> None:
         """Push an asynchronous state change to all connected clients.
 
@@ -141,6 +142,7 @@ class MediaPlayerEntity(ESPHomeEntity):
         announcement: bool = False,
         done_callback: Optional[Callable[[], None]] = None,
     ) -> Iterable[message.Message]:
+        sendspin_was_playing = False
         if announcement:
             self._log.debug("PLAY: announcement true")
             if self.music_player.is_playing:
@@ -215,6 +217,8 @@ class MediaPlayerEntity(ESPHomeEntity):
                         self.music_player.set_volume(0)
                         self.announce_player.set_volume(0)
                         self.muted = True
+                        if self.sendspin_bridge:
+                            self.sendspin_bridge.set_volume(int(self.previous_volume * 100), muted=True)
                         if hasattr(self.server, "state") and getattr(self.server, "state", None) is not None:
                             self.server.state.persist_volume(self.volume)
                     yield self._update_state(self.state)
@@ -226,6 +230,8 @@ class MediaPlayerEntity(ESPHomeEntity):
                         self.music_player.set_volume(int(self.volume * 100))
                         self.announce_player.set_volume(int(self.volume * 100))
                         self.muted = False
+                        if self.sendspin_bridge:
+                            self.sendspin_bridge.set_volume(int(self.volume * 100), muted=False)
                         if hasattr(self.server, "state") and getattr(self.server, "state", None) is not None:
                             self.server.state.persist_volume(self.volume)
                     yield self._update_state(self.state)
@@ -268,6 +274,13 @@ class MediaPlayerEntity(ESPHomeEntity):
         self.state = new_state
         return self._get_state_message()
 
+    def _safe_send_state(self, state: MediaPlayerState) -> None:
+        """Send state update, ignoring connection errors."""
+        try:
+            self.server.send_messages([self._update_state(state)])
+        except Exception:
+            pass  # Connection may be closed or in error state
+
     def _get_state_message(self) -> MediaPlayerStateResponse:
         return MediaPlayerStateResponse(
             key=self.key,
@@ -276,13 +289,6 @@ class MediaPlayerEntity(ESPHomeEntity):
             muted=self.muted,
         )
 
-    def _safe_send_state(self, state: MediaPlayerState) -> None:
-        """Send state update, ignoring connection errors."""
-        try:
-            self.server.send_messages([self._update_state(state)])
-        except Exception:
-            pass  # Connection may be closed or in error state    
-    
     def apply_volume_from_state(self, volume: float) -> None:
         """Synchronize the local volume with the stored state without persisting."""
 
