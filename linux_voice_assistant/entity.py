@@ -197,16 +197,22 @@ class MediaPlayerEntity(ESPHomeEntity):
                 if msg.command == MediaPlayerCommand.PAUSE:
                     self._log.debug("Executing PAUSE")
                     self.music_player.pause()
+                    if self.sendspin_bridge:
+                        self.sendspin_bridge.pause()
                     yield self._update_state(MediaPlayerState.PAUSED)
 
                 elif msg.command == MediaPlayerCommand.PLAY:
                     self._log.debug("Executing PLAY / RESUME")
                     self.music_player.resume()
+                    if self.sendspin_bridge:
+                        self.sendspin_bridge.resume()
                     yield self._update_state(MediaPlayerState.PLAYING)
 
                 elif command == MediaPlayerCommand.STOP:
                     self._log.debug("Executing STOP")
                     self.music_player.stop()
+                    if self.sendspin_bridge:
+                        self.sendspin_bridge.stop()
                     yield self._update_state(MediaPlayerState.IDLE)
 
                 elif command == MediaPlayerCommand.MUTE:
