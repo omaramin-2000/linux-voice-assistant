@@ -399,14 +399,7 @@ class AudioPlayer:
         self._frames_inserted_since_log = 0
         self._frames_dropped_since_log = 0
 
-    def _audio_callback(
-        self,
-        outdata: memoryview,
-        frames: int,
-        time: AudioTimeInfo,
-        status: object,
-    ) -> None:
-        """Audio callback invoked by the soundcard-backed output thread."""
+    def _audio_callback(self, outdata, frames, time, status):
         if self._format is None:
             return
 
@@ -422,28 +415,29 @@ class AudioPlayer:
                 self._fill_silence(output_buffer, 0, bytes_needed)
                 return
 
-        # Keep the output path as a direct PCM pass-through. The SendSpin timing
-        # metadata is too jittery for the synthetic drift-correction loop and
-        # produces audible stutter when the extra frame insert/drop logic is active.
         self._update_playback_position_from_dac(time)
 
+        bytes_written = 0
         if self._playback_state == PlaybackState.WAITING_FOR_START:
-            self._playback_state = PlaybackState.PLAYING
-            self._scheduled_start_loop_time_us = int(self._loop.time() * self._MICROSECONDS_PER_SECOND)
-            self._scheduled_start_dac_time_us = None
+            bytes_written = self._handle_start_gating(output_buffer, 0, frames, time)
 
-        try:
-            pcm_data = self._read_input_frames_bulk(frames)
-            if len(pcm_data) < bytes_needed:
-                output_buffer[: len(pcm_data)] = pcm_data
-                self._fill_silence(output_buffer, len(pcm_data), bytes_needed - len(pcm_data))
-            else:
-                output_buffer[:bytes_needed] = pcm_data[:bytes_needed]
-        except Exception:
-            _LOGGER.exception("Error in audio callback")
-            self._fill_silence(output_buffer, 0, bytes_needed)
-            self._current_chunk = None
-            self._current_chunk_offset = 0
+        if self._playback_state == PlaybackState.PLAYING and bytes_written < bytes_needed:
+            try:
+                frames_remaining = (bytes_needed - bytes_written) // self._format.frame_size
+                pcm_data = self._read_input_frames_bulk(frames_remaining)
+                if len(pcm_data) < (bytes_needed - bytes_written):
+                    output_buffer[bytes_written : bytes_written + len(pcm_data)] = pcm_data
+                    self._fill_silence(output_buffer, bytes_written + len(pcm_data), bytes_needed - bytes_written - len(pcm_data))
+                else:
+                    output_buffer[bytes_written:bytes_needed] = pcm_data[: bytes_needed - bytes_written]
+            except Exception:
+                _LOGGER.exception("Error in audio callback")
+                self._fill_silence(output_buffer, bytes_written, bytes_needed - bytes_written)
+                self._current_chunk = None
+                self._current_chunk_offset = 0
+        elif bytes_written < bytes_needed:
+            # Still waiting for start and gating didn't fill the whole buffer
+            self._fill_silence(output_buffer, bytes_written, bytes_needed - bytes_written)
 
         self._apply_volume(output_buffer, bytes_needed)
 
@@ -813,13 +807,20 @@ class AudioPlayer:
 
         now_us = int(self._loop.time() * self._MICROSECONDS_PER_SECOND)
 
-        # Start immediately; fake start-gating is what causes the slow/choppy output.
+        # Anchor playback start to the server-scheduled time (computed via the
+        # clock-sync offset), so this client starts in sync with other Sendspin
+        # players instead of racing ahead by however long local buffering took.
         if self._scheduled_start_loop_time_us is None:
-            self._scheduled_start_loop_time_us = int(self._loop.time() * self._MICROSECONDS_PER_SECOND)
+            try:
+                self._scheduled_start_loop_time_us = self._compute_client_time(server_timestamp_us)
+            except Exception:
+                _LOGGER.exception("Failed to compute client time for start; starting immediately")
+                self._scheduled_start_loop_time_us = int(self._loop.time() * self._MICROSECONDS_PER_SECOND)
             self._scheduled_start_dac_time_us = None
-            self._playback_state = PlaybackState.PLAYING
+            self._playback_state = PlaybackState.WAITING_FOR_START
             self._first_server_timestamp_us = server_timestamp_us
-            self._early_start_suspect = False
+            now_us = int(self._loop.time() * self._MICROSECONDS_PER_SECOND)
+            self._early_start_suspect = (self._scheduled_start_loop_time_us - now_us) < -self._EARLY_START_THRESHOLD_US
 
         # While waiting to start, update scheduled start as time sync improves
         elif self._playback_state == PlaybackState.WAITING_FOR_START and self._first_server_timestamp_us is not None:
