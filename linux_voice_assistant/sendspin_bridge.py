@@ -1245,11 +1245,27 @@ class SendspinBridge:
                 self.media_player.server.send_messages([self.media_player._update_state(self.media_player.state)])
 
         elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
+            was_muted = self._muted
             self._muted = player_cmd.mute
+
+            # Capture the volume to restore only at the moment mute first turns on,
+            # so a later (or interleaved) VOLUME=0 push can't destroy the real value.
+            if self._muted and not was_muted:
+                self._pre_mute_volume = self._volume
+
             self._update_player_volume()
-            # Sync with MediaPlayerEntity
+
             if self.media_player:
                 self.media_player.muted = self._muted
+                if self._muted:
+                    effective_volume = 0
+                else:
+                    effective_volume = self._pre_mute_volume
+                    self._volume = self._pre_mute_volume  # restore the bridge's own record too
+
+                self.media_player.volume = effective_volume / 100.0
+                self.media_player.music_player.set_volume(effective_volume)
+                self.media_player.announce_player.set_volume(effective_volume)
                 self.media_player.server.send_messages([self.media_player._update_state(self.media_player.state)])
             _LOGGER.info("SendSpin server %s player", "muted" if player_cmd.mute else "unmuted")
 
