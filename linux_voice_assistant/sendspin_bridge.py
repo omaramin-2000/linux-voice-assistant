@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import collections
 import logging
-import socket
 import threading
 import time
 from dataclasses import dataclass
@@ -930,10 +929,16 @@ class SendspinBridge:
             static_delay_ms: Static playback delay
             audio_device: Audio device index or name
         """
-        hostname = socket.gethostname()
         self.media_player = media_player_entity
-        self.client_id = client_id or f"linux-voice-assistant-{hostname}"
-        self.client_name = client_name or hostname
+        # self.client_id = client_id or f"linux-voice-assistant-{hostname}"
+
+        lva_name: str | None = None
+        state = getattr(media_player_entity.server, "state", None)
+        if state is not None:
+            lva_name = getattr(state, "friendly_name", None) or getattr(state, "name", None)
+
+        self.client_id = client_id or f"linux-voice-assistant-{lva_name}"
+        self.client_name = client_name
         self._audio_device = audio_device
         self._static_delay_ms = static_delay_ms
 
