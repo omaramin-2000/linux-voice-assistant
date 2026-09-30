@@ -252,6 +252,14 @@ async def main() -> None:
     # SendSpin client options
     # ------------------------------------------------------------------
     parser.add_argument(
+        "--enable-sendspin",
+        type=int,
+        choices=(0, 1),
+        default=1,
+        metavar="{0,1}",
+        help="Enable (1) or disable (0) the SendSpin client (default: enabled)",
+    )
+    parser.add_argument(
         "--sendspin-url",
         help="SendSpin server WebSocket URL (e.g., ws://192.168.1.100:8928/sendspin)",
     )
@@ -581,8 +589,8 @@ async def main() -> None:
     process_audio_thread.start()
 
     vsp = VoiceSatelliteProtocol(state)
-    # Initialize SendSpin bridge if URL provided
-    if args.sendspin_url:
+    # Initialize SendSpin bridge; without a URL it advertises a listener for discovery.
+    if args.enable_sendspin:
         from .audio_device_util import find_soundcard_by_name
         from .sendspin_bridge import SendspinBridge
 
