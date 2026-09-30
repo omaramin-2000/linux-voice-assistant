@@ -136,6 +136,10 @@ if [ "$DISABLE_PERIPHERAL_API" = "1" ]; then
   EXTRA_ARGS+=( "--disable-peripheral-api" )
 fi
 
+if [ -n "${ENABLE_SENDSPIN}" ]; then
+  EXTRA_ARGS+=( "--enable-sendspin" "$ENABLE_SENDSPIN" )
+fi
+
 if [ -n "${SENDSPIN_URL}" ]; then
   EXTRA_ARGS+=( "--sendspin-url" "$SENDSPIN_URL" )
 fi
