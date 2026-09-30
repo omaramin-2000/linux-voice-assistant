@@ -10,19 +10,28 @@ from __future__ import annotations
 import asyncio
 import collections
 import logging
+# import socket
 import threading
 import time
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Callable, Final, Protocol
 
+from linux_voice_assistant.player import state
 import numpy as np
 import soundcard as sc
 from aioesphomeapi.model import MediaPlayerState
 from aiosendspin.client import SendspinClient
+from aiosendspin.client.models import PairingSupport
 from aiosendspin.models.core import DeviceInfo, ServerCommandPayload, StreamStartMessage
 from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
-from aiosendspin.models.types import AudioCodec, PlayerCommand, PlaybackStateType, Roles
+from pathlib import Path
+from aiosendspin.noise.keys import Identity
+import contextlib
+from aiosendspin.client import ClientListener
+from aiosendspin.noise.trust_store import ClientPairingStore, FileClientPairingStore
+from aiosendspin.models.controller import ControllerStatePayload
+from aiosendspin.models.types import AudioCodec, MediaCommand, PlayerCommand, PlaybackStateType, Roles
 
 if TYPE_CHECKING:
     from aiosendspin.client import AudioFormat, PCMFormat
@@ -929,6 +938,7 @@ class SendspinBridge:
             static_delay_ms: Static playback delay
             audio_device: Audio device index or name
         """
+        # hostname = socket.gethostname()
         self.media_player = media_player_entity
         # self.client_id = client_id or f"linux-voice-assistant-{hostname}"
 
@@ -942,7 +952,13 @@ class SendspinBridge:
         self._audio_device = audio_device
         self._static_delay_ms = static_delay_ms
 
+        self._identity_file = Path(f"/app/configuration/sendspin_identity_{self.client_id}.key")
+        self._pairing_file = Path(f"/app/configuration/sendspin_pairing_{self.client_id}.json")
+        self._identity: Identity | None = None
+        self._pairing_store: ClientPairingStore | None = None
         self._client: SendspinClient | None = None
+        self._listener: ClientListener | None = None
+        self._controller_supported_commands: set[MediaCommand] = set()
         self._running = False
         self._stream_active = False
         self._paused = False  # Track if playback is paused (for announcements)
@@ -960,42 +976,71 @@ class SendspinBridge:
         # Callback to notify when SendSpin starts playing
         self._on_sendspin_start: Callable[[], None] | None = None
 
-        # Create SendSpin client
-        self._client = SendspinClient(
-            client_id=self.client_id,
+    async def _ensure_identity_and_store(self) -> None:
+        if self._identity_file.exists():
+            self._identity = Identity.from_private_bytes(self._identity_file.read_bytes())
+        else:
+            self._identity = Identity.generate()
+            self._identity_file.parent.mkdir(parents=True, exist_ok=True)
+            self._identity_file.write_bytes(self._identity.private_bytes)
+        self._pairing_store = await FileClientPairingStore.open(self._pairing_file)
+
+    async def _on_pairing_pin_display(self, pin: str | None) -> None:
+        if pin is not None:
+            _LOGGER.info("=" * 60)
+            _LOGGER.info("SENDSPIN PAIRING REQUIRED — enter this PIN in Music Assistant: %s", pin)
+            _LOGGER.info("=" * 60)
+        else:
+            _LOGGER.info("SendSpin pairing window closed")
+
+    def _create_client(self) -> SendspinClient:
+        assert self._identity is not None and self._pairing_store is not None
+        return SendspinClient(
+            identity=self._identity,
             client_name=self.client_name,
             roles=[Roles.PLAYER],
+            pairing_store=self._pairing_store,
+            pairing_support=PairingSupport(
+                pin_display=self._on_pairing_pin_display,
+                offer_static_pin=True,
+            ),            
             device_info=DeviceInfo(
                 product_name="Linux Voice Assistant",
                 manufacturer="OHF-Voice",
-                software_version="1.0.0",
+                software_version="1.1.15",
             ),
             player_support=ClientHelloPlayerSupport(
                 supported_formats=[
-                    SupportedAudioFormat(
-                        codec=AudioCodec.PCM,
-                        channels=2,
-                        sample_rate=44_100,
-                        bit_depth=16,
-                    ),
-                    SupportedAudioFormat(
-                        codec=AudioCodec.PCM,
-                        channels=1,
-                        sample_rate=44_100,
-                        bit_depth=16,
-                    ),
+                    SupportedAudioFormat(codec=AudioCodec.PCM, channels=2, sample_rate=44_100, bit_depth=16),
+                    SupportedAudioFormat(codec=AudioCodec.PCM, channels=1, sample_rate=44_100, bit_depth=16),
                 ],
                 buffer_capacity=32_000_000,
                 supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
             ),
-            static_delay_ms=static_delay_ms,
+            static_delay_ms=self._static_delay_ms,
         )
 
         # Register listeners
-        self._client.add_audio_chunk_listener(self._on_audio_chunk)
-        self._client.add_stream_start_listener(self._on_stream_start)
-        self._client.add_stream_end_listener(self._on_stream_end)
-        self._client.add_server_command_listener(self._on_server_command)
+        # self._client.add_audio_chunk_listener(self._on_audio_chunk)
+        # self._client.add_stream_start_listener(self._on_stream_start)
+        # self._client.add_stream_end_listener(self._on_stream_end)
+        # self._client.add_server_command_listener(self._on_server_command)
+        # self._controller_supported_commands: set[MediaCommand] = set()
+        # self._client.add_controller_state_listener(self._on_controller_state)
+
+    def _on_controller_state(self, state: ControllerStatePayload) -> None:
+        self._controller_supported_commands = set(state.supported_commands)
+
+    async def _send_group_command(self, command: MediaCommand) -> None:
+        if not self._client or not self._client.connected:
+            return
+        if command not in self._controller_supported_commands:
+            _LOGGER.debug("Sendspin controller command %s not currently supported", command)
+            return
+        try:
+            await self._client.send_group_command(command)
+        except ValueError:
+            _LOGGER.warning("Sendspin group command %s rejected", command, exc_info=True)
 
     def set_on_sendspin_start(self, callback: Callable[[], None]) -> None:
         """Set callback to be called when SendSpin starts playing."""
@@ -1043,18 +1088,24 @@ class SendspinBridge:
             self._player.set_volume(vol, muted=self._muted)
 
     def pause(self) -> None:
-        """Pause SendSpin playback (for announcements)."""
         if self._stream_active and not self._paused:
             self._paused = True
             if self._player:
-                self._player.set_volume(0, muted=True)  # Mute instead of stopping
+                self._player.set_volume(0, muted=True)
+            if self._client and self._client.connected:
+                asyncio.get_event_loop().call_soon(
+                    lambda: asyncio.create_task(self._send_group_command(MediaCommand.PAUSE))
+                )
             _LOGGER.info("SendSpin playback paused")
 
     def resume(self) -> None:
-        """Resume SendSpin playback after pause."""
         if self._stream_active and self._paused:
             self._paused = False
             self._update_player_volume()
+            if self._client and self._client.connected:
+                asyncio.get_event_loop().call_soon(
+                    lambda: asyncio.create_task(self._send_group_command(MediaCommand.PLAY))
+                )
             _LOGGER.info("SendSpin playback resumed")
 
     @property
@@ -1073,27 +1124,24 @@ class SendspinBridge:
             # Report the current playback state using the enum supported by the installed aiosendspin version.
             if self._client and self._client.connected:
                 asyncio.get_event_loop().call_soon(
-                    lambda: asyncio.create_task(
-                        self._client.send_player_state(
-                            state=PlaybackStateType.STOPPED,
-                            volume=self._volume,
-                            muted=self._muted,
-                        )
-                    )
+                    lambda: asyncio.create_task(self._send_group_command(MediaCommand.STOP))
                 )
 
     async def start(self, server_url: str | None = None) -> None:
-        """Start the SendSpin client.
-
-        Args:
-            server_url: Optional server URL to connect to
-        """
-        if self._running or not self._client:
+        if self._running:
             return
+
+        await self._ensure_identity_and_store()
+        self._client = self._create_client()
+
+        self._client.add_audio_chunk_listener(self._on_audio_chunk)
+        self._client.add_stream_start_listener(self._on_stream_start)
+        self._client.add_stream_end_listener(self._on_stream_end)
+        self._client.add_server_command_listener(self._on_server_command)
+        self._client.add_controller_state_listener(self._on_controller_state)
 
         self._running = True
 
-        # Sync volume with MediaPlayerEntity
         if self.media_player:
             self._volume = int(self.media_player.volume * 100)
             self._muted = self.media_player.muted
@@ -1101,22 +1149,67 @@ class SendspinBridge:
         _LOGGER.info("Starting SendSpin bridge: %s", self.client_id)
 
         if server_url:
+            # Explicit URL: dial out directly (manual/advanced override).
             asyncio.create_task(self._connection_loop(server_url))
         else:
-            _LOGGER.info("SendSpin bridge started (no server URL - waiting for connections)")
+            # Default: advertise via mDNS and accept inbound connections,
+            # matching `sendspin daemon`'s zero-configuration behavior.
+            asyncio.create_task(self._listener_loop())
+
+    async def _listener_loop(self) -> None:
+        """Advertise via mDNS and accept inbound connections from a Sendspin server."""
+        self._listener = ClientListener(
+            client_id=self.client_id,
+            on_connection=self._handle_server_connection,
+            path="/sendspin",
+            host="0.0.0.0",
+            advertise_mdns=True,
+            client_name=self.client_name,
+        )
+        await self._listener.start()
+        _LOGGER.info("SendSpin bridge advertising via mDNS as '%s'", self.client_id)
+
+    async def _handle_server_connection(self, ws) -> None:
+        """Handle an inbound connection from a Sendspin server (e.g. Music Assistant)."""
+        if self._client is None:
+            return
+        attach_task = asyncio.create_task(self._client.attach_websocket(ws))
+        try:
+            for _ in range(100):  # ~10s handshake timeout
+                if self._client.connected:
+                    break
+                if attach_task.done():
+                    attach_task.result()
+                    return
+                await asyncio.sleep(0.1)
+            else:
+                _LOGGER.warning("SendSpin handshake did not complete in time")
+                attach_task.cancel()
+                return
+
+            _LOGGER.info("SendSpin handshake complete with server")
+            disconnect_event = asyncio.Event()
+            unsubscribe = self._client.add_disconnect_listener(disconnect_event.set)
+            await disconnect_event.wait()
+            unsubscribe()
+            _LOGGER.info("Disconnected from SendSpin server")
+        finally:
+            attach_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await attach_task
 
     async def disconnect(self) -> None:
-        """Stop the SendSpin client."""
         if not self._running:
             return
-
         _LOGGER.info("Stopping SendSpin bridge")
         self._running = False
-
         self._stop_playback()
-
+        if self._listener is not None:
+            await self._listener.stop()
+            self._listener = None
         if self._client and self._client.connected:
             await self._client.disconnect()
+
 
     def _create_player(self, fmt: "AudioFormat") -> None:
         """Create AudioPlayer for the given format."""
