@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import collections
 import logging
-# import socket
 import threading
 import time
 from dataclasses import dataclass
@@ -938,9 +937,7 @@ class SendspinBridge:
             static_delay_ms: Static playback delay
             audio_device: Audio device index or name
         """
-        # hostname = socket.gethostname()
         self.media_player = media_player_entity
-        # self.client_id = client_id or f"linux-voice-assistant-{hostname}"
 
         lva_name: str | None = None
         state = getattr(media_player_entity.server, "state", None)
@@ -1019,14 +1016,6 @@ class SendspinBridge:
             ),
             static_delay_ms=self._static_delay_ms,
         )
-
-        # Register listeners
-        # self._client.add_audio_chunk_listener(self._on_audio_chunk)
-        # self._client.add_stream_start_listener(self._on_stream_start)
-        # self._client.add_stream_end_listener(self._on_stream_end)
-        # self._client.add_server_command_listener(self._on_server_command)
-        # self._controller_supported_commands: set[MediaCommand] = set()
-        # self._client.add_controller_state_listener(self._on_controller_state)
 
     def _on_controller_state(self, state: ControllerStatePayload) -> None:
         self._controller_supported_commands = set(state.supported_commands)
