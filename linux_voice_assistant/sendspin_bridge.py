@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import logging
+# import socket
 import threading
 import time
 from dataclasses import dataclass
@@ -937,7 +938,9 @@ class SendspinBridge:
             static_delay_ms: Static playback delay
             audio_device: Audio device index or name
         """
+        # hostname = socket.gethostname()
         self.media_player = media_player_entity
+        # self.client_id = client_id or f"linux-voice-assistant-{hostname}"
 
         lva_name: str | None = None
         state = getattr(media_player_entity.server, "state", None)
@@ -959,6 +962,7 @@ class SendspinBridge:
         self._running = False
         self._stream_active = False
         self._paused = False  # Track if playback is paused (for announcements)
+        self._sendspin_owns_playback: bool = False  # True once Sendspin has played; cleared when HA takes over
 
         # AudioPlayer for time-synchronized playback
         self._player: AudioPlayer | None = None
@@ -995,7 +999,8 @@ class SendspinBridge:
         return SendspinClient(
             identity=self._identity,
             client_name=self.client_name,
-            roles=[Roles.PLAYER],
+            # roles=[Roles.PLAYER],
+            roles=[Roles.PLAYER, Roles.CONTROLLER],
             pairing_store=self._pairing_store,
             pairing_support=PairingSupport(
                 pin_display=self._on_pairing_pin_display,
@@ -1003,7 +1008,7 @@ class SendspinBridge:
             ),            
             device_info=DeviceInfo(
                 product_name="Linux Voice Assistant",
-                manufacturer="OHF-Voice",
+                manufacturer="Open Home Foundation",
                 software_version="1.1.15",
             ),
             player_support=ClientHelloPlayerSupport(
@@ -1017,19 +1022,46 @@ class SendspinBridge:
             static_delay_ms=self._static_delay_ms,
         )
 
-    def _on_controller_state(self, state: ControllerStatePayload) -> None:
-        self._controller_supported_commands = set(state.supported_commands)
+        # Register listeners
+        # self._client.add_audio_chunk_listener(self._on_audio_chunk)
+        # self._client.add_stream_start_listener(self._on_stream_start)
+        # self._client.add_stream_end_listener(self._on_stream_end)
+        # self._client.add_server_command_listener(self._on_server_command)
+        # self._controller_supported_commands: set[MediaCommand] = set()
+        # self._client.add_controller_state_listener(self._on_controller_state)
+
+    def _on_controller_state(self, payload) -> None:
+        # aiosendspin 9.x passes the full ServerStatePayload; the controller
+        # data lives under .controller (which can be None on unrelated updates).
+        controller = getattr(payload, "controller", None) or payload
+        commands = getattr(controller, "supported_commands", None)
+        if commands is None:
+            return
+        self._controller_supported_commands = set(commands)
+        _LOGGER.info(
+            "Sendspin controller state received: supported=%s",
+            sorted(str(c) for c in self._controller_supported_commands),
+        )
 
     async def _send_group_command(self, command: MediaCommand) -> None:
         if not self._client or not self._client.connected:
+            _LOGGER.warning("Sendspin group command %s skipped: not connected", command)
             return
         if command not in self._controller_supported_commands:
-            _LOGGER.debug("Sendspin controller command %s not currently supported", command)
+            _LOGGER.warning(
+                "Sendspin group command %s skipped: not in supported set %s",
+                command, sorted(str(c) for c in self._controller_supported_commands),
+            )
             return
         try:
             await self._client.send_group_command(command)
+            _LOGGER.info("Sendspin group command %s sent", command)
         except ValueError:
             _LOGGER.warning("Sendspin group command %s rejected", command, exc_info=True)
+
+    def release_playback(self) -> None:
+        self._sendspin_owns_playback = False
+        self._paused = False
 
     def set_on_sendspin_start(self, callback: Callable[[], None]) -> None:
         """Set callback to be called when SendSpin starts playing."""
@@ -1046,7 +1078,7 @@ class SendspinBridge:
             asyncio.get_event_loop().call_soon(
                 lambda v=self._volume: asyncio.create_task(
                     self._client.send_player_state(
-                        state=PlaybackStateType.PLAYING,
+                        available=True,
                         volume=v,
                         muted=self._muted,
                     )
@@ -1088,14 +1120,19 @@ class SendspinBridge:
             _LOGGER.info("SendSpin playback paused")
 
     def resume(self) -> None:
-        if self._stream_active and self._paused:
-            self._paused = False
-            self._update_player_volume()
-            if self._client and self._client.connected:
-                asyncio.get_event_loop().call_soon(
-                    lambda: asyncio.create_task(self._send_group_command(MediaCommand.PLAY))
-                )
-            _LOGGER.info("SendSpin playback resumed")
+        _LOGGER.info(
+            "resume() called: stream_active=%s paused=%s owns=%s",
+            self._stream_active, self._paused, self._sendspin_owns_playback,
+        )
+        if not (self._paused or self._sendspin_owns_playback):
+            return
+        self._paused = False
+        self._update_player_volume()
+        if self._client and self._client.connected:
+            asyncio.get_event_loop().call_soon(
+                lambda: asyncio.create_task(self._send_group_command(MediaCommand.PLAY))
+            )
+        _LOGGER.info("SendSpin playback resumed")
 
     @property
     def is_playing(self) -> bool:
@@ -1297,6 +1334,7 @@ class SendspinBridge:
         _LOGGER.info("SendSpin stream started")
         self._stream_active = True
         self._paused = False
+        self._sendspin_owns_playback = True
 
         # Notify MediaPlayerEntity (it will handle pausing HA music and updating state)
         if self._on_sendspin_start:
@@ -1307,11 +1345,18 @@ class SendspinBridge:
         _LOGGER.info("SendSpin stream ended")
         self._stream_active = False
         self._paused = False
+        self._stop_playback()
+
+        if self._paused:
+            # Stream ended because of our pause. Keep _paused so resume() works
+            # and keep the entity showing PAUSED.
+            return
 
         # Stop playback
         self._stop_playback()
 
         # Update MediaPlayerEntity state to idle
+        self._paused = False
         if self.media_player:
             self.media_player.server.send_messages([self.media_player._update_state(MediaPlayerState.IDLE)])
 
@@ -1362,7 +1407,7 @@ class SendspinBridge:
         asyncio.get_event_loop().call_soon(
             lambda v=self._volume: asyncio.create_task(
                 self._client.send_player_state(
-                    state=PlaybackStateType.PLAYING,
+                    available=True,
                     volume=v,
                     muted=self._muted,
                 )
