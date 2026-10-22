@@ -163,6 +163,8 @@ class MediaPlayerEntity(ESPHomeEntity):
                 )
         else:
             self._log.debug("PLAY: announcement false")
+            if self.sendspin_bridge:
+                self.sendspin_bridge.release_playback()            
             # Music
             self.music_player.play(
                 url,
