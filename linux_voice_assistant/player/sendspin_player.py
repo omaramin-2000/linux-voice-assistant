@@ -18,8 +18,6 @@ _TIMEOUT_SECONDS = 1.0
 _POLL_INTERVAL_SECONDS = 1.0
 # (unreachable for at least this many seconds, poll interval in seconds), longest first
 _UNREACHABLE_POLL_STEPS = ((600.0, 60.0), (120.0, 30.0), (30.0, 5.0))
-# While ducked, a group volume that differs from the one LVA set by more than this was changed by someone else
-_EXTERNAL_CHANGE_TOLERANCE = 1
 
 
 @dataclass(frozen=True)
@@ -27,7 +25,7 @@ class SendspinStatus:
     """
     What the Sendspin player reports.
     :param state: ``playing`` or ``idle`` (paused, stopped, unknown or no server connected, the protocol does not tell them apart).
-    :param volume: Group volume 0-100 as the user sees it (the duck is not included), None if unknown.
+    :param volume: Group volume 0-100, None if unknown.
     :param muted: Whether the group is muted.
     """
 
@@ -42,20 +40,9 @@ class SendspinPlayer:
 
     The protocol is one request line per connection. The first reply line is ``ok`` or ``error <kind>: <reason>``,
     a ``status`` reply continues with ``key: value`` lines. The player has no per-endpoint duck, so ducking sets the
-    **group** volume (``vol``) to a fraction of the user's volume, like halving ``mpv.volume`` does.
-
-    The duck is kept out of the volume that LVA exposes:
-
-    * While ducked, ``_ducked_from`` is the volume of the user and ``_ducked_to`` the volume that LVA sent to the player.
-    * :meth:`status` reports ``_ducked_from``, so the entities never show the duck.
-    * :meth:`set_volume` while ducked only changes ``_ducked_from`` and sends the ducked value, so the assistant stays ducked.
-    * A group volume that someone else changes while ducked (for example in Music Assistant) is taken as the new volume of the
-      user and ducked again.
-
-    In ``stop`` mode ducking stops the player instead and starts it again afterwards, the volume is not touched.
-    All methods are thread-safe and never raise: an unreachable player only means that nothing is ducked.
-
-    Limit: the group volume really is lowered while ducked, so Music Assistant and other players of the same Sendspin group see it.
+    **group** volume (``vol``) and restores the value that ``status`` reported before. In ``stop`` mode ducking stops the
+    player instead and starts it again afterwards, the volume is not touched. All methods are thread-safe and
+    never raise: an unreachable player only means that nothing is ducked.
     """
 
     def __init__(self, socket_path: Union[str, Path], duck_mode: str = DUCK_MODE_STOP) -> None:
@@ -66,7 +53,6 @@ class SendspinPlayer:
         self._socket_path = str(socket_path)
         self._lock = threading.Lock()
         self._ducked_from: Optional[int] = None
-        self._ducked_to: Optional[int] = None
         self._poll_thread: Optional[threading.Thread] = None
         self._reachable: Optional[bool] = None
         self._unreachable_since: Optional[float] = None
@@ -80,8 +66,7 @@ class SendspinPlayer:
     def set_duck_persistence(self, on_duck_changed: Callable[[Optional[int], Optional[int]], None], saved: Tuple[Optional[int], Optional[int]]) -> None:
         """
         Remember the ducked volume across restarts. A volume saved by an earlier run is restored once the player is reachable.
-        :param on_duck_changed: Called with ``(volume before, volume after)`` when ducking starts or the volume changes while ducked
-            and with ``(None, None)`` when it ends.
+        :param on_duck_changed: Called with ``(volume before, volume after)`` when ducking starts and with ``(None, None)`` when it ends.
         :param saved: ``(volume before, volume after)`` that an earlier run left behind, ``(None, None)`` if there is none.
         """
         self._on_duck_changed = on_duck_changed
@@ -121,7 +106,7 @@ class SendspinPlayer:
 
     def status(self) -> Optional[SendspinStatus]:
         """
-        :return: The status of the player, None if it is unreachable. The volume never includes the duck.
+        :return: The status of the player, None if it is unreachable.
         """
         with self._lock:
             raw = self._status()
@@ -132,8 +117,7 @@ class SendspinPlayer:
             if state != "playing":
                 state = "idle"
 
-            volume = self._user_volume(self._parse_volume(raw))
-            return SendspinStatus(state=state, volume=volume, muted="(muted)" in raw.get("group volume", ""))
+            return SendspinStatus(state=state, volume=self._parse_volume(raw), muted="(muted)" in raw.get("group volume", ""))
 
     def play(self) -> None:
         """Start or resume playback."""
@@ -149,22 +133,14 @@ class SendspinPlayer:
 
     def set_volume(self, percent: int) -> None:
         """
-        Set the group volume as the user sees it. While ducked the player gets the ducked value, so the duck stays in place
-        and is only lifted by :meth:`unduck`.
+        Set the group volume.
         :param percent: Volume 0-100.
         """
-        percent = max(0, min(100, percent))
         with self._lock:
             if self._ducked_from is not None:
-                ducked = self._ducked_level(percent)
-                if self._send(f"vol {ducked}"):
-                    _LOGGER.debug("Sendspin volume set to %d while ducked (player gets %d)", percent, ducked)
-                    self._ducked_from = percent
-                    self._ducked_to = ducked
-                    self._notify_duck(percent, ducked)
-                return
-
-            self._send(f"vol {percent}")
+                self._ducked_from = None
+                self._notify_duck(None, None)
+            self._send(f"vol {max(0, min(100, percent))}")
 
     def set_muted(self, muted: bool) -> None:
         """
@@ -188,7 +164,7 @@ class SendspinPlayer:
 
     def unduck(self, owner: str = "assistant") -> None:
         """
-        End a ducking request. The volume of the user is restored (or the player started in ``stop`` mode) when no owner is left.
+        End a ducking request. The group volume saved by :meth:`duck` is restored (or the player started in ``stop`` mode) when no owner is left.
         :param owner: The owner that called :meth:`duck`.
         """
         with self._lock:
@@ -207,7 +183,6 @@ class SendspinPlayer:
                 return
 
             volume, self._ducked_from = self._ducked_from, None
-            self._ducked_to = None
             _LOGGER.debug("Sendspin volume restored to %d", volume)
             self._send(f"vol {volume}")
             self._notify_duck(None, None)
@@ -252,31 +227,6 @@ class SendspinPlayer:
         words = status.get("group volume", "").split()
         return int(words[0]) if words and words[0].isdigit() else None
 
-    def _ducked_level(self, volume: int) -> int:
-        """The group volume that the player gets for the volume of the user while ducked."""
-        return max(0, min(100, int(volume * self._duck_factor)))
-
-    def _user_volume(self, actual: Optional[int]) -> Optional[int]:
-        """
-        Turn the group volume that the player reports into the volume of the user. Expects the lock to be held.
-        While ducked this is the volume that was there before ducking. If someone else changed the group volume in the meantime,
-        that value becomes the volume of the user and is ducked again.
-        :param actual: Group volume as reported by the player.
-        """
-        if self._ducked_from is None or actual is None:
-            return actual
-
-        if self._ducked_to is not None and abs(actual - self._ducked_to) > _EXTERNAL_CHANGE_TOLERANCE:
-            ducked = self._ducked_level(actual)
-            _LOGGER.debug("Sendspin volume changed to %d while ducked, ducking it to %d", actual, ducked)
-            if self._send(f"vol {ducked}"):
-                self._ducked_from = actual
-                self._ducked_to = ducked
-                self._notify_duck(actual, ducked)
-            return actual
-
-        return self._ducked_from
-
     def _apply_duck(self) -> None:
         """Lower the group volume (or stop the player) if ducking is requested and the player plays. Expects the lock to be held."""
         if self._ducked_from is not None or self._stopped_by_duck:
@@ -294,11 +244,10 @@ class SendspinPlayer:
         if (status is None) or (status.get("state") != "playing") or (volume is None):
             return
 
-        ducked = self._ducked_level(volume)
+        ducked = max(0, min(100, int(volume * self._duck_factor)))
         if self._send(f"vol {ducked}"):
             _LOGGER.debug("Sendspin ducked from %d to %d (owners: %s)", volume, ducked, sorted(self._duck_owners))
             self._ducked_from = volume
-            self._ducked_to = ducked
             self._notify_duck(volume, ducked)
 
     def _duck_if_requested(self) -> None:
