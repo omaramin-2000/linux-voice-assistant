@@ -1,23 +1,34 @@
 """Client for the control socket of a Sendspin player (``sendspin-cli``, e.g. the Music Assistant Local Audio add-on)."""
 
+import json
 import logging
 import socket
+import subprocess
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Optional, Set, Tuple, Union
+from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
 CONTROL_SOCKET_NAME = "control.sock"
 DUCK_MODE_DUCK = "duck"
 DUCK_MODE_STOP = "stop"
+DEFAULT_DUCK_STREAM_MATCH = "sendspin"
 
 _LOGGER = logging.getLogger(__name__)
 
 _TIMEOUT_SECONDS = 1.0
 _POLL_INTERVAL_SECONDS = 1.0
+# While ducking is requested, poll faster so that a stream that appears in the meantime is ducked quickly
+_DUCK_POLL_INTERVAL_SECONDS = 0.25
 # (unreachable for at least this many seconds, poll interval in seconds), longest first
 _UNREACHABLE_POLL_STEPS = ((600.0, 60.0), (120.0, 30.0), (30.0, 5.0))
+
+_PACTL_TIMEOUT_SECONDS = 2.0
+# Volume of a PulseAudio/PipeWire stream at 100 %
+_PA_VOLUME_NORM = 65536
+# Properties of a sink input that ``duck_stream_match`` is looked for in
+_STREAM_MATCH_PROPERTIES = ("application.name", "application.process.binary", "media.name")
 
 
 @dataclass(frozen=True)
@@ -34,25 +45,48 @@ class SendspinStatus:
     muted: bool
 
 
+@dataclass(frozen=True)
+class _Stream:
+    """A playback stream (sink input) of the local audio server."""
+
+    index: int
+    volumes: List[int]
+    """Raw volume of every channel, ``_PA_VOLUME_NORM`` is 100 %."""
+
+
 class SendspinPlayer:
     """
     Ducks, stops and resumes a Sendspin player through its control socket.
 
     The protocol is one request line per connection. The first reply line is ``ok`` or ``error <kind>: <reason>``,
-    a ``status`` reply continues with ``key: value`` lines. The player has no per-endpoint duck, so ducking sets the
-    **group** volume (``vol``) and restores the value that ``status`` reported before. In ``stop`` mode ducking stops the
-    player instead and starts it again afterwards, the volume is not touched. All methods are thread-safe and
-    never raise: an unreachable player only means that nothing is ducked.
+    a ``status`` reply continues with ``key: value`` lines.
+
+    Ducking never touches the Sendspin volume. The player has no per-endpoint duck, and ``vol`` sets the **group** volume that
+    the entities show and that other players of the group follow. Instead, ``duck`` mode lowers the volume of the playback
+    **stream** of the player on the local PulseAudio/PipeWire server (``pactl set-sink-input-volume``) to ``factor`` of its
+    current value, exactly like halving ``mpv.volume`` does for the media player. Changing the Sendspin volume while ducked
+    only changes ``vol``, so the stream stays ducked until :meth:`unduck`.
+
+    In ``stop`` mode ducking stops the player instead and starts it again afterwards, the volume is not touched.
+    All methods are thread-safe and never raise: if the player or ``pactl`` is unreachable, nothing is ducked.
+
+    Needs ``pactl`` and access to the audio server that the player plays on (``PULSE_SERVER`` or the socket in ``XDG_RUNTIME_DIR``).
     """
 
-    def __init__(self, socket_path: Union[str, Path], duck_mode: str = DUCK_MODE_STOP) -> None:
+    def __init__(
+        self,
+        socket_path: Union[str, Path],
+        duck_mode: str = DUCK_MODE_STOP,
+        duck_stream_match: str = DEFAULT_DUCK_STREAM_MATCH,
+    ) -> None:
         """
         :param socket_path: Path of the control socket of the player (``--control-socket`` of ``sendspin-cli``).
-        :param duck_mode: ``stop`` stops the player while ducked and starts it afterwards, ``duck`` lowers the group volume.
+        :param duck_mode: ``stop`` stops the player while ducked and starts it afterwards, ``duck`` lowers the volume of its audio stream.
+        :param duck_stream_match: Text (case insensitive) that identifies the stream of the player among the sink inputs of the audio server.
+            It is looked for in the application name, the binary and the media name, see ``pactl list sink-inputs``.
         """
         self._socket_path = str(socket_path)
         self._lock = threading.Lock()
-        self._ducked_from: Optional[int] = None
         self._poll_thread: Optional[threading.Thread] = None
         self._reachable: Optional[bool] = None
         self._unreachable_since: Optional[float] = None
@@ -61,12 +95,18 @@ class SendspinPlayer:
         self._duck_owners: Set[str] = set()
         self._duck_factor = 0.5
         self._duck_mode = duck_mode
+        self._duck_stream_match = duck_stream_match.strip().lower()
         self._stopped_by_duck = False
+        # Sink input index -> volume of its channels before ducking
+        self._ducked_streams: Dict[int, List[int]] = {}
+        self._stream_candidates: List[str] = []
+        self._warned_no_stream = False
+        self._warned_pactl = False
 
     def set_duck_persistence(self, on_duck_changed: Callable[[Optional[int], Optional[int]], None], saved: Tuple[Optional[int], Optional[int]]) -> None:
         """
-        Remember the ducked volume across restarts. A volume saved by an earlier run is restored once the player is reachable.
-        :param on_duck_changed: Called with ``(volume before, volume after)`` when ducking starts and with ``(None, None)`` when it ends.
+        Remember the ducked stream volume across restarts. A volume saved by an earlier run is restored once the stream of the player shows up.
+        :param on_duck_changed: Called with ``(stream volume before, stream volume after)`` in percent when ducking starts and with ``(None, None)`` when it ends.
         :param saved: ``(volume before, volume after)`` that an earlier run left behind, ``(None, None)`` if there is none.
         """
         self._on_duck_changed = on_duck_changed
@@ -75,8 +115,8 @@ class SendspinPlayer:
 
     @property
     def is_ducked(self) -> bool:
-        """Whether the group volume is currently lowered or the player stopped by :meth:`duck`."""
-        return self._ducked_from is not None or self._stopped_by_duck
+        """Whether the stream of the player is currently lowered or the player stopped by :meth:`duck`."""
+        return bool(self._ducked_streams) or self._stopped_by_duck
 
     def start_polling(self, callback: Callable[[Optional[SendspinStatus]], None]) -> None:
         """
@@ -133,14 +173,10 @@ class SendspinPlayer:
 
     def set_volume(self, percent: int) -> None:
         """
-        Set the group volume.
+        Set the group volume. Ducking works on the audio stream, so it is not affected and stays in place.
         :param percent: Volume 0-100.
         """
-        with self._lock:
-            if self._ducked_from is not None:
-                self._ducked_from = None
-                self._notify_duck(None, None)
-            self._send(f"vol {max(0, min(100, percent))}")
+        self._send(f"vol {max(0, min(100, percent))}")
 
     def set_muted(self, muted: bool) -> None:
         """
@@ -151,9 +187,9 @@ class SendspinPlayer:
 
     def duck(self, factor: float = 0.5, owner: str = "assistant") -> None:
         """
-        Request ducking: lower the group volume to ``factor`` of its current value (or stop the player in ``stop`` mode) while the player is playing.
+        Request ducking: lower the volume of the audio stream of the player to ``factor`` of its current value (or stop the player in ``stop`` mode).
         The request stays until :meth:`unduck`, so playback that starts later is ducked too.
-        :param factor: Fraction of the current group volume, 0.0 to 1.0, not used in ``stop`` mode.
+        :param factor: Fraction of the current stream volume, 0.0 to 1.0, not used in ``stop`` mode.
         :param owner: Who asks. The volume is restored when every owner has called :meth:`unduck`.
         """
         with self._lock:
@@ -164,7 +200,7 @@ class SendspinPlayer:
 
     def unduck(self, owner: str = "assistant") -> None:
         """
-        End a ducking request. The group volume saved by :meth:`duck` is restored (or the player started in ``stop`` mode) when no owner is left.
+        End a ducking request. The stream volume saved by :meth:`duck` is restored (or the player started in ``stop`` mode) when no owner is left.
         :param owner: The owner that called :meth:`duck`.
         """
         with self._lock:
@@ -179,13 +215,7 @@ class SendspinPlayer:
                 self._send("play")
                 return
 
-            if self._ducked_from is None:
-                return
-
-            volume, self._ducked_from = self._ducked_from, None
-            _LOGGER.debug("Sendspin volume restored to %d", volume)
-            self._send(f"vol {volume}")
-            self._notify_duck(None, None)
+            self._restore_streams()
 
     def is_playing(self) -> bool:
         """Whether the server reports the group as playing."""
@@ -194,7 +224,10 @@ class SendspinPlayer:
             return (status is not None) and (status.get("state") == "playing")
 
     def _poll_interval(self) -> float:
-        """Seconds to wait before the next poll: the longer the socket is unreachable, the less often it is tried."""
+        """Seconds to wait before the next poll: faster while ducking, the longer the socket is unreachable, the less often it is tried."""
+        if self._duck_owners and self._duck_mode == DUCK_MODE_DUCK:
+            return _DUCK_POLL_INTERVAL_SECONDS
+
         if self._unreachable_since is None:
             return _POLL_INTERVAL_SECONDS
 
@@ -227,28 +260,86 @@ class SendspinPlayer:
         words = status.get("group volume", "").split()
         return int(words[0]) if words and words[0].isdigit() else None
 
-    def _apply_duck(self) -> None:
-        """Lower the group volume (or stop the player) if ducking is requested and the player plays. Expects the lock to be held."""
-        if self._ducked_from is not None or self._stopped_by_duck:
-            return
+    @staticmethod
+    def _percent(volumes: List[int]) -> int:
+        """Volume of the first channel in percent."""
+        return round(volumes[0] * 100 / _PA_VOLUME_NORM)
 
+    def _ducked_level(self, volume: int) -> int:
+        """The raw volume of a channel while ducked. A factor on the raw value is what halving ``mpv.volume`` does."""
+        return max(0, int(volume * self._duck_factor))
+
+    def _apply_duck(self) -> None:
+        """Duck the player if ducking is requested. Expects the lock to be held."""
         if self._duck_mode == DUCK_MODE_STOP:
+            if self._stopped_by_duck:
+                return
+
             status = self._status()
             if (status is not None) and (status.get("state") == "playing") and self._send("stop"):
                 _LOGGER.debug("Sendspin stopped for ducking (owners: %s)", sorted(self._duck_owners))
                 self._stopped_by_duck = True
             return
 
-        status = self._status()
-        volume = self._parse_volume(status)
-        if (status is None) or (status.get("state") != "playing") or (volume is None):
+        self._duck_streams()
+
+    def _duck_streams(self) -> None:
+        """Lower every stream of the player that is not ducked yet. Expects the lock to be held."""
+        streams = self._list_streams()
+        if streams is None:
             return
 
-        ducked = max(0, min(100, int(volume * self._duck_factor)))
-        if self._send(f"vol {ducked}"):
-            _LOGGER.debug("Sendspin ducked from %d to %d (owners: %s)", volume, ducked, sorted(self._duck_owners))
-            self._ducked_from = volume
-            self._notify_duck(volume, ducked)
+        present = {stream.index for stream in streams}
+        for index in [index for index in self._ducked_streams if index not in present]:
+            _LOGGER.debug("Sendspin stream %d is gone", index)
+            del self._ducked_streams[index]
+
+        if not streams and not self._ducked_streams and not self._warned_no_stream:
+            self._warned_no_stream = True
+            _LOGGER.warning(
+                "No audio stream matching '%s' to duck Sendspin. Playing streams: %s. Set the match to part of the application name, binary or media name of the player",
+                self._duck_stream_match,
+                ", ".join(self._stream_candidates) or "none",
+            )
+
+        for stream in streams:
+            if stream.index in self._ducked_streams:
+                continue
+
+            ducked = [self._ducked_level(volume) for volume in stream.volumes]
+            if not self._set_stream_volume(stream.index, ducked):
+                continue
+
+            _LOGGER.debug(
+                "Sendspin stream %d ducked from %d%% to %d%% (owners: %s)",
+                stream.index,
+                self._percent(stream.volumes),
+                self._percent(ducked),
+                sorted(self._duck_owners),
+            )
+            first = not self._ducked_streams
+            self._ducked_streams[stream.index] = stream.volumes
+            if first:
+                self._notify_duck(self._percent(stream.volumes), self._percent(ducked))
+
+    def _restore_streams(self) -> None:
+        """Give the ducked streams their volume back. Expects the lock to be held."""
+        if not self._ducked_streams:
+            return
+
+        saved, self._ducked_streams = self._ducked_streams, {}
+        streams = self._list_streams()
+        present = None if streams is None else {stream.index for stream in streams}
+        for index, volumes in saved.items():
+            if present is not None and index not in present:
+                continue
+
+            if self._set_stream_volume(index, volumes):
+                _LOGGER.debug("Sendspin stream %d restored to %d%%", index, self._percent(volumes))
+            else:
+                _LOGGER.warning("Could not restore the volume of Sendspin stream %d to %d%%", index, self._percent(volumes))
+
+        self._notify_duck(None, None)
 
     def _duck_if_requested(self) -> None:
         """Duck playback that started while ducking was requested."""
@@ -261,21 +352,83 @@ class SendspinPlayer:
             self._on_duck_changed(volume_from, volume_to)
 
     def _recover_duck(self) -> None:
-        """Restore the volume of a ducking that an earlier run did not finish, once the player answers."""
+        """Restore the stream volume of a ducking that an earlier run did not finish, once the stream of the player shows up."""
         with self._lock:
             if self._recover is None:
                 return
 
-            volume = self._parse_volume(self._status())
-            if volume is None:
+            streams = self._list_streams()
+            if not streams:
                 return
 
             volume_from, volume_to = self._recover
             self._recover = None
-            if volume == volume_to and volume != volume_from:
-                _LOGGER.warning("Restoring the Sendspin group volume to %d, an earlier run left it ducked at %d", volume_from, volume_to)
-                self._send(f"vol {volume_from}")
+            for stream in streams:
+                percent = self._percent(stream.volumes)
+                if stream.index in self._ducked_streams or percent == 0:
+                    continue
+
+                if abs(percent - volume_to) <= 1 and percent != volume_from:
+                    _LOGGER.warning("Restoring Sendspin stream %d to %d%%, an earlier run left it ducked at %d%%", stream.index, volume_from, percent)
+                    self._set_stream_volume(stream.index, [int(volume * volume_from / percent) for volume in stream.volumes])
             self._notify_duck(None, None)
+
+    def _list_streams(self) -> Optional[List[_Stream]]:
+        """
+        :return: The streams of the player among the sink inputs of the audio server, None if the audio server cannot be asked.
+        """
+        output = self._pactl("--format=json", "list", "sink-inputs")
+        if output is None:
+            return None
+
+        try:
+            entries = json.loads(output)
+        except ValueError:
+            _LOGGER.debug("Cannot parse the list of sink inputs", exc_info=True)
+            return None
+
+        streams: List[_Stream] = []
+        candidates: List[str] = []
+        for entry in entries:
+            properties = entry.get("properties") or {}
+            texts = [str(properties.get(name, "")) for name in _STREAM_MATCH_PROPERTIES]
+            candidates.append(" / ".join(text for text in texts if text) or f"#{entry.get('index')}")
+            if self._duck_stream_match not in " ".join(texts).lower():
+                continue
+
+            volumes = [int(channel["value"]) for channel in (entry.get("volume") or {}).values()]
+            if volumes:
+                streams.append(_Stream(index=int(entry["index"]), volumes=volumes))
+
+        self._stream_candidates = candidates
+        if streams:
+            self._warned_no_stream = False
+
+        return streams
+
+    def _set_stream_volume(self, index: int, volumes: List[int]) -> bool:
+        return self._pactl("set-sink-input-volume", str(index), *[str(volume) for volume in volumes]) is not None
+
+    def _pactl(self, *arguments: str) -> Optional[str]:
+        """
+        :return: The output of ``pactl``, None if it cannot be run or fails.
+        """
+        try:
+            result = subprocess.run(["pactl", *arguments], capture_output=True, text=True, timeout=_PACTL_TIMEOUT_SECONDS, check=False)
+        except FileNotFoundError:
+            if not self._warned_pactl:
+                self._warned_pactl = True
+                _LOGGER.critical("pactl is not installed (package pulseaudio-utils), Sendspin cannot be ducked")
+            return None
+        except (OSError, subprocess.SubprocessError) as err:
+            _LOGGER.debug("pactl %s failed: %s", " ".join(arguments), err)
+            return None
+
+        if result.returncode != 0:
+            _LOGGER.debug("pactl %s failed: %s", " ".join(arguments), result.stderr.strip())
+            return None
+
+        return result.stdout
 
     def _send(self, command: str) -> bool:
         return self._request(command) is not None
