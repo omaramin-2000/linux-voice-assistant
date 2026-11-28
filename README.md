@@ -110,6 +110,18 @@ The documentation for the build process can be found in the [GitHub Actions Work
 ## Development
 
 <details>
+<summary><b>Docker Compose files</b></summary>
+
+- `docker-compose.yml` is for operation, and for checking a built image as it is (a release, `nightly` or the image of a pull request).
+- `docker-compose.dev.yml` is for checking the local state of your checkout: it mounts the source code, sounds, internal wake words, scripts and the entrypoint into the image and installs the dependencies of the local `pyproject.toml`. It runs the image of a pull request by default, so set `LVA_IMAGE_TAG` to the pull request number in `.env`, or use `LVA_IMAGE="ghcr.io/ohf-voice/linux-voice-assistant"` with `LVA_IMAGE_TAG="nightly"`.
+
+```bash
+docker compose -f docker-compose.dev.yml up -d
+```
+
+</details>
+
+<details>
 <summary><b>System Requirements</b></summary>
 
 **System packages (Linux):**
