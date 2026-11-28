@@ -49,7 +49,7 @@ A normal voice interaction runs through these phases:
 | # | Phase | What you hear / what happens | Music |
 |---|-------|------------------------------|-------|
 | 1 | **Wake word** is detected | The wake sound plays (`--wakeup-sound`). | Ducked to 50 % immediately |
-| 2 | **Listening** | Your speech is streamed to Home Assistant. By default listening starts when the wake sound has finished playing. With `--listen-during-wake-sound` it starts right away, so you can talk over the chime. | Stays ducked |
+| 2 | **Listening** | Your speech is streamed to Home Assistant. LVA asks Home Assistant not to change the audio (no noise suppression, no automatic gain, volume unchanged), because LVA already applies Mic Volume and, if switched on, its own noise suppression and automatic gain. By default listening starts when the wake sound has finished playing. With `--listen-during-wake-sound` it starts right away, so you can talk over the chime. | Stays ducked |
 | 3 | **Thinking** | Home Assistant processes the request. If the *Thinking Sound* switch is on, a short sound plays. | Stays ducked |
 | 4 | **Speaking** | The spoken reply (TTS) plays. The stop word is now active. | Stays ducked |
 | 5 | **Done** | The assistant returns to idle. | Restored to full volume after the reply has finished playing |

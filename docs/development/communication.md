@@ -87,7 +87,7 @@ Each Home Assistant connection gets its own protocol instance, but the settings,
 
 | Message | Direction | Meaning |
 |---------|-----------|---------|
-| `VoiceAssistantRequest(start=True, wake_word_phrase)` | LVA → HA | Start a pipeline run. The phrase is empty after a button press or a continued conversation |
+| `VoiceAssistantRequest(start=True, wake_word_phrase, audio_settings)` | LVA → HA | Start a pipeline run. The phrase is empty after a button press; a continued conversation sends the phrase of the wake word that started the conversation. `audio_settings` always asks for no processing in Home Assistant (no noise suppression, no auto gain, volume multiplier 1.0), see [audio_pipeline.md](audio_pipeline.md) |
 | `VoiceAssistantAudio(data, data2)` | LVA → HA | One chunk of microphone audio. `data2` is the unprocessed channel when two channels are captured. See [audio_pipeline.md](audio_pipeline.md) |
 | `VoiceAssistantEventResponse` | HA → LVA | Progress of the run: `RUN_START`, `STT_*`, `INTENT_*`, `TTS_*`, `RUN_END`, `ERROR` |
 | `VoiceAssistantAnnounceRequest` | HA → LVA | Play an announcement, optionally with a pre-announce sound and a follow-up conversation |
