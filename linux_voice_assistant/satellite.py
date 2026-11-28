@@ -29,6 +29,7 @@ from aioesphomeapi.api_pb2 import (  # type: ignore[attr-defined]
     VoiceAssistantAnnounceFinished,
     VoiceAssistantAnnounceRequest,
     VoiceAssistantAudio,
+    VoiceAssistantAudioSettings,
     VoiceAssistantConfigurationRequest,
     VoiceAssistantConfigurationResponse,
     VoiceAssistantEventResponse,
@@ -1057,14 +1058,14 @@ class VoiceSatelliteProtocol(APIServer):
     def _start_audio_streaming(self, wake_word_phrase: str) -> None:
         """Start streaming audio during wake sound detection."""
         _LOGGER.debug("Sending VoiceAssistantRequest to Home Assistant with wake_word_phrase '%s'", wake_word_phrase)
-        self.send_messages([VoiceAssistantRequest(start=True, wake_word_phrase=wake_word_phrase)])
+        self.send_messages([_pipeline_start_request(wake_word_phrase)])
         self._is_streaming_audio = True
         self._emit(LVAEvent.LISTENING)
 
     def _on_wakeup_sound_finished(self, wake_word_phrase: str) -> None:
         """Callback invoked when the wakeup chime finishes; begin STT streaming."""
         _LOGGER.debug("Wakeup sound finished, sending VoiceAssistantRequest to Home Assistant with wake_word_phrase '%s'", wake_word_phrase)
-        self.send_messages([VoiceAssistantRequest(start=True, wake_word_phrase=wake_word_phrase)])
+        self.send_messages([_pipeline_start_request(wake_word_phrase)])
         self._is_streaming_audio = True
         self._emit(LVAEvent.LISTENING)
 
@@ -1101,7 +1102,7 @@ class VoiceSatelliteProtocol(APIServer):
     def _on_start_listening_sound_finished(self) -> None:
         """Callback invoked when the start-listening chime finishes; begin STT streaming."""
         _LOGGER.debug("Start-listening sound finished, sending VoiceAssistantRequest to Home Assistant with an empty wake_word_phrase")
-        self.send_messages([VoiceAssistantRequest(start=True, wake_word_phrase="")])
+        self.send_messages([_pipeline_start_request("")])
         self._is_streaming_audio = True
         self._emit(LVAEvent.LISTENING)
 
@@ -1163,7 +1164,7 @@ class VoiceSatelliteProtocol(APIServer):
                     self.unduck()
                     return
                 _LOGGER.debug("Sending VoiceAssistantRequest to Home Assistant with wake_word_phrase '%s' (continued conversation)", self._wake_word_phrase)
-                self.send_messages([VoiceAssistantRequest(start=True, wake_word_phrase=self._wake_word_phrase)])
+                self.send_messages([_pipeline_start_request(self._wake_word_phrase)])
                 self._is_streaming_audio = True
                 _LOGGER.debug("Continued conversation started")
 
@@ -1482,3 +1483,15 @@ class VoiceSatelliteProtocol(APIServer):
         for connection in list(self.state.connections):
             connection._keep_music_on_disconnect = True  # pylint: disable=protected-access
             connection.close_connection()
+
+
+def _pipeline_start_request(wake_word_phrase: str) -> VoiceAssistantRequest:
+    """
+    Build the request that starts a voice pipeline, with audio settings that leave the audio unchanged.
+    :param wake_word_phrase: Name of the wake word that started the pipeline, empty if none did (button, peripheral).
+
+    Home Assistant applies these settings to the microphone audio. Without them protobuf sends a volume multiplier
+    of 0.0 and Home Assistant mutes the audio. LVA processes the audio itself (Mic Volume, WebRTC), so it asks for no processing.
+    """
+    audio_settings = VoiceAssistantAudioSettings(noise_suppression_level=0, auto_gain=0, volume_multiplier=1.0)
+    return VoiceAssistantRequest(start=True, wake_word_phrase=wake_word_phrase, audio_settings=audio_settings)

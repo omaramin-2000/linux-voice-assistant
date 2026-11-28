@@ -488,6 +488,8 @@ class TestContinueConversation:
 
         assert request.start
         assert request.wake_word_phrase == "Hey Jarvis"
+        # Without explicit audio settings Home Assistant multiplies the audio by 0.0
+        assert request.audio_settings.volume_multiplier == 1.0
 
     def test_follow_up_logs_phrase(self, tmp_path, caplog):
         sat = make_satellite(tmp_path)

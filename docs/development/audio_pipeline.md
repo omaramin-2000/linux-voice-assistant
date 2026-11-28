@@ -209,6 +209,8 @@ After `handle_audio()`, the processed `audio_chunk` feeds the detectors:
 
 `wakeup()` returns early when muted or when a pipeline is already active. Otherwise it ducks music, plays the wake sound and sends `VoiceAssistantRequest(start=True)`. With `listen_during_wake_sound` the request is sent right away; otherwise after the wake sound has finished. This is what turns streaming on in step 6. While Home Assistant verifies wake words, `wakeup()` instead sends the request with the wake word audio at once, without wake sound and without ducking (see "Wake word audio" above).
 
+Every start request carries `audio_settings` with `noise_suppression_level = 0`, `auto_gain = 0` and `volume_multiplier = 1.0` (`_pipeline_start_request()` in [`satellite.py`](../../linux_voice_assistant/satellite.py)). Home Assistant applies these settings to the audio it receives: since home-assistant/core#190096 (first in 2026.12.0b0) it multiplies every sample by `volume_multiplier` when it is not 1.0. Without the field, protobuf delivers its default `0.0` and Home Assistant receives only silence. The values are fixed because LVA does its own processing (Mic Volume, WebRTC) and Home Assistant must not process the audio a second time.
+
 The wake word runs on the same audio as the stream. Attenuation from Mic Volume and the WebRTC result therefore also change detection.
 
 ## How Home Assistant and aioesphomeapi treat `data2`
